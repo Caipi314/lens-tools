@@ -1,6 +1,6 @@
 from KoalaController import KoalaController
+import time
 import matplotlib.pyplot as plt
-import timeit
 import numpy as np
 
 def guessTop():
@@ -26,10 +26,12 @@ try:
 	host.setup()
 	# guessTop()
 
-	execution_time = timeit.timeit(lambda: host.find_focus(guessHeight_mm = 2, topDown = True), number=1)
-	# execution_time = timeit.timeit(lambda: host.getContrast(avg=3), number=1)
-	print(f"Execution time: {execution_time:.6f} seconds")
+	start = time.time()
+	host.find_focus(guessHeight_mm = 10, topDown = False)
+	end = time.time()
 
+
+	print(f"Execution time: {end - start:.3f} seconds")
 	# display2dArray(phase)
 
 

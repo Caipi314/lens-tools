@@ -41,6 +41,7 @@ class KoalaController:
 
     def move_to(self, x=None, y=None, z=None, h=None, fatal=True, fast=False):
         """MUST SET self.maxZ in order to move the Z axis"""
+        #? Fast mode does not wait for the moving to finish (according to Koala), but adds 0.4s delay. ~50% speedup for small movements
         #* give Z in joystick/real heights
         #* h is height of surface from stage.
         if h != None:
@@ -115,7 +116,6 @@ class KoalaController:
         return sumContrast  / avg
 
         #? Convention: z's are from the top, h's are from the bottom with focus distance included.
-    def find_focus2(self, guessHeight_mm):
         #? h's are the height of the actual object
 
         guessHeight = guessHeight_mm * 1e3
@@ -148,7 +148,8 @@ class KoalaController:
             """Search until the first decrease in contrast"""
             print(f'Searching for max contrast between {minH} and {maxH} using {subdivisions} subdivisions (avg = {avg})')
 
-            contrasts = collections.deque([(0, 0), (0, minH)], maxlen=2) # minH needs to be there in case first check is decreasing, (0, minH) will be the first item in the list
+            # minH needs to be there in case first check is decreasing, (0, minH) will be the first item in the list
+            contrasts = collections.deque([(0, 0), (0, minH)], maxlen=2)
 
             for h in np.linspace(minH, maxH, subdivisions)[::-1 if topDown else 1]:
                 self.move_to(h = h, fast = True)
@@ -169,18 +170,16 @@ class KoalaController:
         #? h's are the height of the actual object
 
         guessHeight = guessHeight_mm * 1e3
-        self.maxZ = ABS_MAX_Z - guessHeight # 20% factor is safety
-        print(self.maxZ)
+        self.maxZ = ABS_MAX_Z - guessHeight
 
         # ! start and bottom, go up in 100um intervals to find max holo contrast. Stop at guessHeight above the minH
-        # maxH = minH + guessHeight
-        noiseCutoff = 1.9 # if below this, definitely noise
+        noiseCutoff = 1.95 # if below this, definitely noise
 
         minH = guessHeight - self.focusDist / 2
-        l = searchUntilDecrease(minH, self.ABS_MAX_H, subdivisions = 50, avg = 3, topDown = topDown)
-        l = searchUntilDecrease(l[0][1], l[-1][1], subdivisions = 20, avg = 5)
-        l = searchUntilDecrease(l[0][1], l[-1][1], subdivisions = 50, avg = 30)
-        print(f'max contrasts: {l}')
+        l = searchUntilDecrease(minH, self.ABS_MAX_H, subdivisions = 50, avg = 5, topDown = topDown)
+        l = searchUntilDecrease(l[0][1], l[-1][1], subdivisions = 20, avg = 20)
+        l = searchUntilDecrease(l[0][1], l[-1][1], subdivisions = 10, avg = 30)
+        print(f'max contrast: {l[1]}')
 
 
     def logout(self):
