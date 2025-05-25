@@ -54,7 +54,7 @@ def load_phase_file():
     return phase, pxSize_um  # [um (height)], [um/px (x and y)]
 
 
-def fit_plane(phase, pxSize):
+def fit_plane(phase, pxSize, returnCoefs=False):
     """Receives a numpy grid of heights and returns the slope in x and y"""
     # Down sample by 10. (Take every 10th point)
     ny, nx = phase.shape
@@ -68,6 +68,9 @@ def fit_plane(phase, pxSize):
     # A [um] * x [.] = phase [um]
     x, *_ = np.linalg.lstsq(A, phase_ds.ravel(), rcond=None)
     a, b, c = x
+
+    if returnCoefs:
+        return a, b, c
 
     # a = dz/dx [um/um]    b = dz/dy [um/um]    c = height at (x=0, y=0) [um]
     def surface(x, y):
