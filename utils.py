@@ -54,7 +54,7 @@ def load_phase_file():
     return phase, pxSize_um  # [um (height)], [um/px (x and y)]
 
 
-def slope(phase, pxSize):
+def fit_plane(phase, pxSize):
     """Receives a numpy grid of heights and returns the slope in x and y"""
     # Down sample by 10. (Take every 10th point)
     ny, nx = phase.shape
@@ -68,7 +68,42 @@ def slope(phase, pxSize):
     # A [um] * x [.] = phase [um]
     x, *_ = np.linalg.lstsq(A, phase_ds.ravel(), rcond=None)
     a, b, c = x
-    # z = ax + by + c
-    # a = dz/dx [um/um]    b = dz/dy [um/um]    c = height at (x=0, y=0) [um]
 
-    return (a, b, c)
+    # a = dz/dx [um/um]    b = dz/dy [um/um]    c = height at (x=0, y=0) [um]
+    def surface(x, y):
+        return a * x + b * y + c
+
+    return surface
+
+
+def fit_quadratic(phase, pxSize):
+    """
+    Receives a numpy grid `phase` of heights and pixel size `pxSize` (um/px),
+    downsamples by `step`, and returns the quadratic coefficients
+      z = A x^2 + B y^2 + C x y + D x + E y + F
+    as a tuple (A, B, C, D, E, F).
+    """
+    ny, nx = phase.shape
+    step = 10
+
+    # down-sample
+    phase_ds = phase[::step, ::step]
+    Y_sub, X_sub = np.mgrid[0:ny:step, 0:nx:step] * pxSize
+
+    # flatten
+    x = X_sub.ravel()
+    y = Y_sub.ravel()
+    z = phase_ds.ravel()
+
+    # design matrix: [x^2, y^2, x*y, x, y, 1]
+    A = np.column_stack((x**2, y**2, x * y, x, y, np.ones_like(x)))
+
+    # solve least squares
+    coeffs, *_ = np.linalg.lstsq(A, z, rcond=None)
+    a, b, c, d, e, f = coeffs
+
+    # z = A x^2 + B y^2 + C x y + D x + E y + F
+    def surface(x, y):
+        return a * x**2 + b * y**2 + c * x * y + d * x + e * y + f
+
+    return surface
