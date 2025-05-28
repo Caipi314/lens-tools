@@ -21,20 +21,27 @@ def display2dArray(array):
 
 
 def focus():
-    host.find_focus(guessHeight=7_000, direction=1)
+    host.setLimit(h=7_000)
+    host.find_focus(direction=1)
 
 
 def traverse():
-    host.setMinH(7_000)
+    host.setLimit(h=7_000)
     host.move_to(x=62650, y=52513, z=13576.2)  # some slant (close to center)
     host.traverse(x=10_000, step=1000)
 
 
 def traverseToTop():
-    host.setMinH(7_000)
+    host.setLimit(h=7_000)
     host.move_to(x=62650, y=52513, z=13576.2)  # some slant (close to center)
     host.traverseToTop()
 
+
+def ensureFocus():
+    host.ensureFocus()
+
+
+# def
 
 try:
     KoalaGui.turnLive(False)
@@ -43,8 +50,11 @@ try:
     host.loadScan(Scan(live=True))
 
     start = time.time()
-    host.find_focus(guessHeight=7_500, direction=-1)
-    host.traverseToTop()
+    host.setLimit(h=8_000)
+    # host.map2dProfile()
+    center = host.traverseToTop()
+    # end = host.traverseToEnd(step=1_000)
+
     # focus()
     # traverse()
     # traverseToTop()
@@ -54,7 +64,7 @@ try:
 except Exception as err:
     traceback.print_exc()
 finally:
+    KoalaGui.turnLive(True)
     host.logout()
     if host.scan:
         host.scan.viewXZPlane(hold=True)
-    KoalaGui.turnLive(True)

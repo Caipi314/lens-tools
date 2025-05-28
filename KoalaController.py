@@ -1,7 +1,9 @@
 import sys
+from tracemalloc import start
 import matplotlib.pyplot as plt
 from datetime import datetime
 from MaxContSearch import MaxContSearch
+from Scan import Scan
 import utils
 import struct
 import pathlib
@@ -24,6 +26,12 @@ IDEAL_NOISE_CUTOFF = 2.2  # 1.95
 LOWEST_NOISE_CUTOFF = 1.7
 ABS_MAX_Z = 27175.0  # um. Max z with no lens or holder on the stage
 MID_Y = 52_500
+
+
+class FocusNotFound(Exception):
+    """Contrast never decreased"""
+
+    pass
 
 
 class KoalaController:
@@ -50,10 +58,10 @@ class KoalaController:
         self.host.OpenPhaseWin()
         time.sleep(0.1)
 
-    def loadScan(self, scan):
+    def loadScan(self, scan: Scan):
         self.scan = scan
 
-    def setMinH(self, h):
+    def setLimit(self, h):
         if h < 500:
             raise Exception("Please give h in um to host.setMinH(h)")
         self.maxZ = ABS_MAX_Z - h
@@ -67,6 +75,8 @@ class KoalaController:
         return ABS_MAX_Z - self.focusDist - h
 
     def zToH(self, z):
+        if z == None:
+            raise Exception(f"Cannot convert z to h when z = {z}")
         return ABS_MAX_Z - self.focusDist - z
 
     def move_to(self, x=0, y=0, z=0, h=0, fatal=True, fast=False):
@@ -75,12 +85,11 @@ class KoalaController:
         # * give Z in joystick/real heights
         # * h is height of surface from stage.
         if h != 0:
-            z = ABS_MAX_Z - h - self.focusDist
+            z = ABS_MAX_Z - h
 
         if z != 0:
             if self.maxZ == None:
-                print("Tried to move without setting self.maxZ")
-                exit()
+                raise Exception("Tried to move without setting self.maxZ")
             if z < 0 or z > ABS_MAX_Z or z > self.maxZ:
                 if fatal:
                     print(f"Tried to move to not allowed z={z}")
@@ -176,9 +185,6 @@ class KoalaController:
             phase = phase * hconv * 1e6
         return phase, pxSize_um  # [um (height)], [um/px (x and y)]
 
-    # def fitPlane(self):
-    #     """Assumes focus, take a phase picture and returns a plane function (x, y) -> h"""
-
     def getContrast(self, avg=5):
         contrasts = []
         for i in range(0, avg):
@@ -188,69 +194,45 @@ class KoalaController:
         highest_half = np.partition(contrasts, -avg // 2)[-avg // 2 :]
         return np.mean(highest_half)
 
-    def searchUntilDecrease(
-        self,
-        search: MaxContSearch,
-        again=0,  # the nth try
-    ):
-        """Search from z_1 to z_2 until the first decrease in contrast"""
+    def searchUntilDecrease(self, search: MaxContSearch):
+        """Search from z_1 to z_2 until the first decrease in contrast. Throws if contrast never decreased"""
         print(
             f"Searching for max contrast from z_1 = {int(search.z_1)} and z_2 = {int(search.z_2)} using {search.subdivisions} subdivisions (avg = {search.avg})"
         )
 
-        # z_1 needs to be there in case first check is decreasing, (0, z_1) will be the first item in the list
-
-        search.setXYPos(*self.getPos()[:2])
+        search.logXYPos(*self.getPos()[:2])
         self.scan.startLogMaxContSearch(search)
-        # search.
-        for z in np.linspace(search.z_1, search.z_2, search.subdivisions):
+
+        # search
+        for z in np.linspace(search.z_1, search.z_2, int(search.subdivisions)):
             self.move_to(z=z, fast=True)
             search.newContPt(self.getContrast(avg=search.avg), z)
             self.scan.updateGraph()
 
             if search.isAtLocalMaxCont():
-                return search.getMaxContInterval()
+                return search.getRecentMaxContInterval()
 
-        if search.contPts[-1][0] > search.minContrast:
+        if search.isStillIncreasing():
             print("Prematurely stopped searching, extending range 200um")
-            return self.searchUntilDecrease(
-                MaxContSearch(
-                    search.z_2,
-                    search.z_2 + 200 * search.direction,
-                    search.direction,
-                    subdivisions=search.subdivisions,
-                    minContrast=IDEAL_NOISE_CUTOFF,
-                    avg=search.avg,
-                ),
-                again=again,
-            )
+            search.extend(200)
+            return self.searchUntilDecrease(search)
 
-        if again == 0:
-            print("Contrast never decreased. Trying again with lower threshold")
-            return self.searchUntilDecrease(
-                MaxContSearch(
-                    search.z_1,
-                    search.z_2,
-                    search.direction,
-                    subdivisions=search.subdivisions * 2,
-                    minContrast=IDEAL_NOISE_CUTOFF,
-                    avg=5,
-                ),
-                again=1,
+        if search.allNonNoise():
+            print(
+                "No decrease in contrast found, so taking highest contrast on interval"
             )
-        if again == 1:
-            raise Exception(f"Contrast never decreased on entire range.")
+            return search.getTotalMaxContInterval()
+        raise FocusNotFound()
 
-    def find_focus(self, guessHeight, direction=-1):
+    def find_focus(self, direction=-1):
+        """Finds the focus from scratch. Can throw FocusNotFound error if nothing is found"""
         # ? Convention: z's are from the top, h's are from the bottom with focus distance included.
-        # ? h's are the height of the actual object
         # * Direction: -1 for stage going down, 1 for stage going up
-        self.setMinH(guessHeight)
+        maxZ = self.maxZ - self.focusDist / 2
 
-        minH = guessHeight - self.focusDist / 2
-        maxZ = self.hToZ(minH)
-
-        l = self.searchUntilDecrease(
+        # running max interval
+        I = []
+        I = self.searchUntilDecrease(
             MaxContSearch(
                 0,
                 maxZ,
@@ -259,53 +241,125 @@ class KoalaController:
                 subdivisions=65,
                 avg=5,
             )
-        )
-        l = self.searchUntilDecrease(
+        )  # will throw NoFocusFound if nothing found
+        I = self.searchUntilDecrease(
             MaxContSearch(
-                l[0][1],
-                l[-1][1],
+                I[0][1],
+                I[-1][1],
                 # start on the side with higher contrast
-                -1 if l[0][0] > l[-1][0] else 1,
-                minContrast=l[1][0],
+                np.sign(I[-1][0] - I[0][0]),
+                minContrast=I[1][0],
                 subdivisions=20,
                 avg=10,
             )
         )
-        l = self.searchUntilDecrease(
+        I = self.searchUntilDecrease(
             MaxContSearch(
-                l[0][1],
-                l[-1][1],
+                I[0][1],
+                I[-1][1],
                 # start on the side with higher contrast
-                -1 if l[0][0] > l[-1][0] else 1,
-                minContrast=l[1][0],
+                np.sign(I[-1][0] - I[0][0]),
+                minContrast=I[1][0],
                 subdivisions=5,
                 avg=20,
             )
         )
-        zFocus = l[1][1]
+        zFocus = I[1][1]
+        self.move_to(z=zFocus)
         print(f"Found focus @ z = {int(zFocus)}")
         return zFocus
 
-    def find_maximising_dir(self, dist=25):
-        """Go up and down a bit and see which direction has increasing contrast"""
-        # ? Could make it faster by only checking 2 and not the center
-        startZ = self.getPos()[2]
-        contrasts = {}
-        for dz in [-dist, dist]:
+    def find_maximising_dir(self, minContrast, dist=25):
+        """Go up and down a bit and see which direction has increasing contrast. Then goes to the less focused point
+        MUST CATCH FocusNotFound Error"""
+
+        x, y, startZ = self.getPos()
+        contrasts = {}  # kv pairs of dz: contrast
+        for dz in [-dist, dist, 0]:
             self.move_to(z=startZ + dz, fast=True)
-            contrast = self.getContrast(avg=50)
+            contrast = self.getContrast(avg=dist + 1)  # fast huristic for avg
             contrasts[dz] = contrast
 
         maxDz = max(contrasts, key=contrasts.get)
-        if contrasts[maxDz] < LOWEST_NOISE_CUTOFF:
-            print("Tried to find_maximising_dir but not currently focused")
-            return 0
+        if contrasts[maxDz] < minContrast:
+            raise FocusNotFound()
         maximisingDir = np.sign(maxDz)
 
-        self.scan.logDirectionSearch(
-            *self.getPos()[:2], startZ, maximisingDir, contrasts
-        )
+        self.move_to(z=startZ - maxDz, fast=True)  # assumes only 2 opposite points
+
+        self.scan.logDirectionSearch(x, y, startZ, maximisingDir, contrasts)
+
         return maximisingDir
+
+    def maximizeFocus(self, minContrast=IDEAL_NOISE_CUTOFF):
+        """Does a direction search, then a maxContrast search. if directino search fails, does a total search. Will propogate FocusNotFound only if the total search fails or a maxZ is not set"""
+        maximisingDir = None
+        try:
+            maximisingDir = self.find_maximising_dir(minContrast)
+            if maximisingDir == 0:
+                return  # already focused
+        except FocusNotFound:
+            print(
+                "find_maximising_dir could not determine focus direction. Doing a total search"
+            )
+            # could throw if no focus is found
+            self.find_focus()
+            return
+
+        # We do have a valid maximisingDir, go in that direction
+        print(f"Searhcing in maximisingDir = {maximisingDir}")
+        curZ = self.getPos()[2]
+        endPoints = {1: self.maxZ - self.focusDist / 2, -1: 0}
+        try:
+            I = self.searchUntilDecrease(
+                MaxContSearch(
+                    curZ,
+                    endPoints[maximisingDir],
+                    maximisingDir,
+                    minContrast,
+                    step=50,  # safe to do a small step beacuse we're already half focused, and the focus depth is not that big
+                ),
+            )
+            I = self.searchUntilDecrease(
+                MaxContSearch(
+                    I[0][1],
+                    I[-1][1],
+                    # start on the side with higher contrast
+                    np.sign(I[-1][0] - I[0][0]),
+                    minContrast=I[1][0],
+                    subdivisions=10,
+                    avg=10,
+                )
+            )
+            print(f"Found focus {I[1][0]} @ z = {int(I[1][1])}")
+            self.move_to(z=I[1][1])
+        except FocusNotFound:  # maybe we got maximising direction wrong?
+            print("No focus found. Trying the other direction")
+            try:
+                self.searchUntilDecrease(
+                    MaxContSearch(
+                        curZ,
+                        endPoints[-maximisingDir],
+                        -maximisingDir,
+                        minContrast,
+                        step=30,
+                    ),
+                )
+            except FocusNotFound:
+                # will throw if found nothing
+                self.find_focus()
+                return
+
+    def ensureFocus(self, minContrast):
+        """Sees if focused, if not, maximizesFocus"""
+        cont = self.getContrast(avg=5)
+        self.scan.logContrast(*self.getPos(), cont)
+        print(f"Contrast is {cont:.2f}")
+
+        # Could make this more advanced, where min contrast could be a functino of how big your step was, and your slope
+        if cont > minContrast:
+            return  # already focused
+        self.maximizeFocus()
 
     def smart_move_rel(self, dx=0, dy=0):
         phase, pxSize = self.phase_um()
@@ -322,44 +376,6 @@ class KoalaController:
         # -dh because the phase picture is calculating heights, and higher things mean lower z
         self.move_rel(dx, dy, -dh)
         return dh
-
-    def ensureFocus(self, minContrast):
-        """Sees if focused, if not, does a direction search, then a maxContrast search"""
-        cont = self.getContrast(avg=5)
-        self.scan.logContrast(*self.getPos(), cont)
-
-        print(f"Contrast is {cont:.2f}")
-        # cutoff could be a functino of how big your step was, and your slope
-        if cont < IDEAL_NOISE_CUTOFF * 2:
-            maximisingDir = self.find_maximising_dir()
-            if maximisingDir == 0:
-                maximisingDir = self.find_maximising_dir()
-            if maximisingDir == 0:
-                return
-
-            print(f"MaximisingDir = {maximisingDir}")
-            curZ = self.getPos()[2]
-            try:
-                self.searchUntilDecrease(
-                    MaxContSearch(
-                        curZ,
-                        curZ + 200 * maximisingDir,
-                        maximisingDir,
-                        minContrast,
-                        subdivisions=30,
-                    ),
-                )
-            except:  # we got maximising direction wrong?
-                print("No focus found. Trying the other direction")
-                self.searchUntilDecrease(
-                    MaxContSearch(
-                        curZ,
-                        curZ - 200 * maximisingDir,
-                        maximisingDir,
-                        minContrast,
-                        subdivisions=20,
-                    ),
-                )
 
     def traverse(self, x=0, step=100):
         startCont = self.getContrast(avg=5)
@@ -382,17 +398,41 @@ class KoalaController:
         dh = a * dx + b * dy
 
         self.move_rel(dx, dy, -dh)
-        print(f"For dx={int(dx)} dy={int(dy)}, added dz={int(dh)}")
+        print(f"For dx={int(dx)} dy={int(dy)}, added dz={dh:.2f}")
         return dh
 
     def traverseToTop(self):
-        startCont = self.getContrast(avg=5)
+        self.maximizeFocus()
+        startCont = self.getContrast()
 
         while True:
-            dz = self.traverseUp(speed=100_000, maxStep=800)
+            dz = self.traverseUp(speed=100_000, maxStep=1_000)
             self.ensureFocus(minContrast=startCont * 0.5)
+            # self.maximizeFocus()
             if dz < 0.01:
-                return self.getPos()
+                center = self.getPos()
+                print(f"Top is at {center}")
+                return center
+
+    def traverseToEnd(self, step=100):
+        """Traverses to the end of a lens until you can't find the contrast. Returns the position of the end"""
+        self.maximizeFocus()
+        startCont = self.getContrast()
+
+        sag = 0
+        while True:
+            try:
+                dz = self.smart_move_rel(dx=step)
+                sag += dz
+                print(f"Sag is at least {sag/1000:.2f}mm")
+                self.ensureFocus(minContrast=startCont * 0.5)
+            except FocusNotFound:
+                x, y, z = self.getPos()
+                edge = (x - step, y, z)
+                print(f"Edge is at {edge}")
+                return edge
+
+    # def map2dProfile(self):
 
     def logout(self):
         """Logout from the Koala remote client."""

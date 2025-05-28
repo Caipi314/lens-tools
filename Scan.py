@@ -107,7 +107,7 @@ class Scan:
             endPts.append((search.x, search.z_1))
             endPts.append((search.x, search.z_2))
             for point in search.contPts:
-                if point == (0, 0):
+                if -1 in point:
                     continue
                 contPts.append((search.x, point[1]))
                 contOfPts.append(point[0])
