@@ -1,23 +1,44 @@
+import copy as copyLib
+
+
 class MaxContSearch:
+    dontTryAgain = False
+
     def __init__(
-        self, z_a, z_b, direction, minContrast, subdivisions=None, step=None, avg=5
+        self,
+        z_a,
+        z_b,
+        direction,
+        minContrast,
+        subdivisions=None,
+        step=None,
+        avg=5,
     ):
         interval = self.zsToInterval(z_a, z_b, direction)
         (self.z_1, self.z_2) = interval
         self.direction = direction
         self.minContrast = minContrast
         self.avg = avg
-        self.subdivisions = subdivisions
-        if step != None:
-            self.subdivisions = int(abs(z_a - z_b) / step)
-        if self.subdivisions == None:
+
+        if subdivisions != None:
+            self.step = abs(z_a - z_b) / subdivisions
+            self.subdivisions = subdivisions
+        elif step != None:
+            self.subdivisions = abs(z_a - z_b) / step
+            self.step = step
+        else:
             raise Exception("Must provide subdivisions or step")
 
         # array of (cont, z)
         # always needs to return with 3 items with the max contrast in the middle
         # start with 2 because we index second last item
         self.contPts = [(-1, -1), (-1, self.z_1)]
-        self.reallyGoodCont = 10  # ... change?
+
+    def emptyCopy(self):
+        copy = copyLib.deepcopy(self)
+        MaxContSearch.dontTryAgain = True
+        copy.contPts = [(-1, -1), (-1, copy.z_1)]
+        return copy
 
     def logXYPos(self, x, y):
         self.x = x
@@ -34,22 +55,20 @@ class MaxContSearch:
 
     def isStillIncreasing(self):
         conts = [pt[0] for pt in self.contPts]
-        lastIsMax = max(conts) in [
-            self.contPts[-1][0],
-            self.contPts[-2][0],
-            self.contPts[-3][0],
-        ]
+        lastIsMax = max(conts) in [self.contPts[-1][0], self.contPts[-2][0]]
         # maxIsNotNoise = self.contPts[-1][0] > self.minContrast
         return lastIsMax
 
     def allNonNoise(self):
         conts = [pt[0] for pt in self.contPts if -1 not in pt]
         allAboveMin = min(conts) > self.minContrast
-        return allAboveMin or min(conts) > self.reallyGoodCont
+        smallRange = abs(self.z_1 - self.z_2) <= 100
+        allAbove90p = min(conts) > self.minContrast * 0.9
+        return allAboveMin or (smallRange and allAbove90p)
 
     def getTotalMaxContInterval(self):
         # Find the point with the maximum contrast
-        max_idx = max(range(len(self.contPts)), key=lambda i: self.contPts[i][0])
+        max_idx = max(range(len(self.contPts) - 1), key=lambda i: self.contPts[i][0])
         return self.contPts[max_idx - 1 : max_idx + 1]
 
     def getRecentMaxContInterval(self):
@@ -67,7 +86,6 @@ class MaxContSearch:
         )
 
     def extend(self, dist):
-        stepSize = abs(self.z_2 - self.z_1) / self.subdivisions
-        self.subdivisions = dist // stepSize
-        self.z_1 = self.z_2
-        self.z_2 = self.z_2 + dist * self.direction
+        self.subdivisions = dist / self.step
+        self.z_1 = self.z_2 - 2 * self.step * self.direction  # start 2 steps back
+        self.z_2 = self.z_2 + dist * self.direction  # go dist forward

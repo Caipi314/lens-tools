@@ -1,16 +1,14 @@
 import sys
-from tracemalloc import start
-import matplotlib.pyplot as plt
 from datetime import datetime
 from MaxContSearch import MaxContSearch
 from Scan import Scan
+from Traversal import Traversal
 import utils
 import struct
 import pathlib
 import numpy as np
 import clr
 import time
-import collections
 
 clr.AddReference("System")
 import System
@@ -32,6 +30,13 @@ class FocusNotFound(Exception):
     """Contrast never decreased"""
 
     pass
+
+
+class InvalidMove(Exception):
+    """Invalid move"""
+
+    def __init__(self, z):
+        super().__init__(f"Tried to move to not allowed z={z}")
 
 
 class KoalaController:
@@ -69,7 +74,7 @@ class KoalaController:
     def getPos(self):
         buffer = System.Array.CreateInstance(System.Double, 4)
         self.host.GetAxesPosMu(buffer)
-        return (buffer[0], buffer[1], buffer[2] / 10)
+        return np.array([buffer[0], buffer[1], buffer[2] / 10])
 
     def hToZ(self, h):
         return ABS_MAX_Z - self.focusDist - h
@@ -92,8 +97,7 @@ class KoalaController:
                 raise Exception("Tried to move without setting self.maxZ")
             if z < 0 or z > ABS_MAX_Z or z > self.maxZ:
                 if fatal:
-                    print(f"Tried to move to not allowed z={z}")
-                    exit()
+                    raise InvalidMove(z)
                 else:
                     return False
         ok = self.host.MoveAxes(
@@ -135,25 +139,15 @@ class KoalaController:
             True,
         )
 
-    def phase(self):
-        """Load the phase image to a numpy array."""
-        #! Take an image (unwrap it)
+    def phaseToTiff(self, absPath):
         self.host.SingleReconstruction()
         self.host.SetUnwrap2DState(True)
 
-        #! Moved to the save reconstruction from memory to a numpy array
-        w = self.host.GetPhaseWidth()
-        h = self.host.GetPhaseHeight()
-
-        # Koala gives phase as 32-bit floats (= System.Single)
-        stride = ((w + 3) // 4) * 4  # Koala pads rows to 4-pixel multiples
-        size = stride * h  # total number of samples in the buffer
-        buf = Array.CreateInstance(System.Single, size)  # .NET float[]
-        self.host.GetPhase32fImage(buf)
-        phase_flat = np.array(buf, dtype=np.float32)
-        phase = phase_flat[: h * w].reshape((h, w))  # drop padding & reshape
-
-        return phase  # * Returns in radians
+        try:
+            self.host.SaveImageToFile(4, str(absPath))
+        except Exception as err:
+            print(err)
+            return self.phaseToTiff(absPath)
 
     def phase_um(self):
         """Load phase image to file, then read file and return numpy array with height in um"""
@@ -165,7 +159,8 @@ class KoalaController:
         fpath = str(self.basePath / "./tmp/phase.bin")
         try:
             self.host.SaveImageFloatToFile(4, fpath, True)
-        except:
+        except Exception as err:
+            print(err)
             return self.phase_um()
 
         with open(fpath, "rb") as f:
@@ -204,7 +199,7 @@ class KoalaController:
         self.scan.startLogMaxContSearch(search)
 
         # search
-        for z in np.linspace(search.z_1, search.z_2, int(search.subdivisions)):
+        for z in np.arange(search.z_1, search.z_2, search.step * search.direction):
             self.move_to(z=z, fast=True)
             search.newContPt(self.getContrast(avg=search.avg), z)
             self.scan.updateGraph()
@@ -222,10 +217,13 @@ class KoalaController:
                 "No decrease in contrast found, so taking highest contrast on interval"
             )
             return search.getTotalMaxContInterval()
+
+        if not search.dontTryAgain:
+            return self.searchUntilDecrease(search.emptyCopy())
         raise FocusNotFound()
 
     def find_focus(self, direction=-1):
-        """Finds the focus from scratch. Can throw FocusNotFound error if nothing is found"""
+        """Finds the focus from scratch. Can throw FocusNotFound error if nothing is found. Return (contrast, z)at max contrast"""
         # ? Convention: z's are from the top, h's are from the bottom with focus distance included.
         # * Direction: -1 for stage going down, 1 for stage going up
         maxZ = self.maxZ - self.focusDist / 2
@@ -238,7 +236,7 @@ class KoalaController:
                 maxZ,
                 direction,
                 minContrast=IDEAL_NOISE_CUTOFF,
-                subdivisions=65,
+                step=200,
                 avg=5,
             )
         )  # will throw NoFocusFound if nothing found
@@ -248,7 +246,7 @@ class KoalaController:
                 I[-1][1],
                 # start on the side with higher contrast
                 np.sign(I[-1][0] - I[0][0]),
-                minContrast=I[1][0],
+                minContrast=I[1][0] * 0.9,
                 subdivisions=20,
                 avg=10,
             )
@@ -259,7 +257,7 @@ class KoalaController:
                 I[-1][1],
                 # start on the side with higher contrast
                 np.sign(I[-1][0] - I[0][0]),
-                minContrast=I[1][0],
+                minContrast=I[1][0] * 0.9,
                 subdivisions=5,
                 avg=20,
             )
@@ -267,7 +265,7 @@ class KoalaController:
         zFocus = I[1][1]
         self.move_to(z=zFocus)
         print(f"Found focus @ z = {int(zFocus)}")
-        return zFocus
+        return I[1]
 
     def find_maximising_dir(self, minContrast, dist=25):
         """Go up and down a bit and see which direction has increasing contrast. Then goes to the less focused point
@@ -285,26 +283,28 @@ class KoalaController:
             raise FocusNotFound()
         maximisingDir = np.sign(maxDz)
 
-        self.move_to(z=startZ - maxDz, fast=True)  # assumes only 2 opposite points
+        try:
+            self.move_to(z=startZ - maxDz, fast=True)  # assumes only 2 opposite points
+        except InvalidMove:
+            raise FocusNotFound()
 
         self.scan.logDirectionSearch(x, y, startZ, maximisingDir, contrasts)
 
         return maximisingDir
 
     def maximizeFocus(self, minContrast=IDEAL_NOISE_CUTOFF):
-        """Does a direction search, then a maxContrast search. if directino search fails, does a total search. Will propogate FocusNotFound only if the total search fails or a maxZ is not set"""
+        """Does a direction search, then a maxContrast search. if directino search fails, does a total search. Will propogate FocusNotFound only if the total search fails or a maxZ is not set. Return the (contrast, z) at max contrast"""
         maximisingDir = None
         try:
             maximisingDir = self.find_maximising_dir(minContrast)
             if maximisingDir == 0:
-                return  # already focused
+                return self.getContrast(), self.getPos()[2]  # already focused
         except FocusNotFound:
             print(
                 "find_maximising_dir could not determine focus direction. Doing a total search"
             )
             # could throw if no focus is found
-            self.find_focus()
-            return
+            return self.find_focus()
 
         # We do have a valid maximisingDir, go in that direction
         print(f"Searhcing in maximisingDir = {maximisingDir}")
@@ -333,33 +333,23 @@ class KoalaController:
             )
             print(f"Found focus {I[1][0]} @ z = {int(I[1][1])}")
             self.move_to(z=I[1][1])
+            return I[1]
         except FocusNotFound:  # maybe we got maximising direction wrong?
-            print("No focus found. Trying the other direction")
-            try:
-                self.searchUntilDecrease(
-                    MaxContSearch(
-                        curZ,
-                        endPoints[-maximisingDir],
-                        -maximisingDir,
-                        minContrast,
-                        step=30,
-                    ),
-                )
-            except FocusNotFound:
-                # will throw if found nothing
-                self.find_focus()
-                return
+            print("No focus found. Trying total search")
+            # will throw if found nothing
+            return self.find_focus()
 
     def ensureFocus(self, minContrast):
-        """Sees if focused, if not, maximizesFocus"""
+        """Sees if focused, if not, maximizesFocus. Returns (contrast, z)"""
         cont = self.getContrast(avg=5)
-        self.scan.logContrast(*self.getPos(), cont)
+        pos = self.getPos()
+        self.scan.logContrast(*pos, cont)
         print(f"Contrast is {cont:.2f}")
 
         # Could make this more advanced, where min contrast could be a functino of how big your step was, and your slope
         if cont > minContrast:
-            return  # already focused
-        self.maximizeFocus()
+            return cont, pos[2]  # already focused
+        return self.maximizeFocus()
 
     def smart_move_rel(self, dx=0, dy=0):
         phase, pxSize = self.phase_um()
@@ -402,22 +392,21 @@ class KoalaController:
         return dh
 
     def traverseToTop(self):
-        self.maximizeFocus()
-        startCont = self.getContrast()
+        """Returns the focused cords and contrast at the center (top)"""
+        startCont, zStart = self.maximizeFocus()
 
         while True:
             dz = self.traverseUp(speed=100_000, maxStep=1_000)
-            self.ensureFocus(minContrast=startCont * 0.5)
+            cont, z = self.ensureFocus(minContrast=startCont * 0.5)
             # self.maximizeFocus()
             if dz < 0.01:
                 center = self.getPos()
                 print(f"Top is at {center}")
-                return center
+                return cont, center
 
     def traverseToEnd(self, step=100):
         """Traverses to the end of a lens until you can't find the contrast. Returns the position of the end"""
-        self.maximizeFocus()
-        startCont = self.getContrast()
+        startCont, zStart = self.maximizeFocus()
 
         sag = 0
         while True:
@@ -425,6 +414,8 @@ class KoalaController:
                 dz = self.smart_move_rel(dx=step)
                 sag += dz
                 print(f"Sag is at least {sag/1000:.2f}mm")
+
+                MaxContSearch.dontTryAgain = True
                 self.ensureFocus(minContrast=startCont * 0.5)
             except FocusNotFound:
                 x, y, z = self.getPos()
@@ -432,7 +423,51 @@ class KoalaController:
                 print(f"Edge is at {edge}")
                 return edge
 
-    # def map2dProfile(self):
+    def map2dProfile(self):
+        startCont, center = self.traverseToTop()
+
+        # Test pic to get barings
+        phase, pxSize = self.phase_um()
+        picSize = np.array(phase.shape) * pxSize
+        trav = Traversal(center, picSize)
+
+        #! first traverse from center to edge (becaus we don't know radius)
+        for i in range(1075):  # half of the total stage
+            try:
+                self.smart_move_rel(dx=trav.stepX)
+
+                MaxContSearch.dontTryAgain = True
+                self.ensureFocus(minContrast=startCont * 0.5)
+
+                picPath = trav.getPicName()
+                self.phaseToTiff(picPath)
+
+                if i == 2:
+                    return
+            except FocusNotFound:
+                trav.lostFocus(*self.getPos())
+                break
+
+        self.move_to(*center)
+        # *The center picture actually gets taken on the first iter of the second loop
+
+        # ? Can increase speed by assuming symmetrical
+        for _ in range(self.radius / self.stepX):
+            self.ensureFocus(minContrast=startCont * 0.5)
+
+            picPath = trav.getPicName()
+            self.phaseToTiff(picPath)
+
+            self.smart_move_rel(dx=-trav.stepX)
+
+        # dx = picSize[1] - overlapXY
+        # totalSize = int(n * picSize[1] - (n - 1) * overlapXY)
+
+        # for i in range(n):
+        # absPath = self.basePath / folder / f"{baseName}_00001_{i+1:05}.bin"
+        # absPath = self.basePath / folder / f"{baseName}_{i:05}.bin"
+        # self.phaseToFile(absPath)
+        # self.smart_move_rel(dx=dx)
 
     def logout(self):
         """Logout from the Koala remote client."""

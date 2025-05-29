@@ -41,7 +41,19 @@ def ensureFocus():
     host.ensureFocus()
 
 
-# def
+def testFocusing():
+    focuses = []
+    for i in range(100):
+        host.move_to(z=1_000)
+        focuses.append(host.maximizeFocus())
+    print(focuses)
+    1
+
+
+def mapProfile():
+    host.move_to(51333, 62041, 13570.4)
+    host.map2dProfile()
+
 
 try:
     KoalaGui.turnLive(False)
@@ -51,8 +63,11 @@ try:
 
     start = time.time()
     host.setLimit(h=8_000)
-    # host.map2dProfile()
-    center = host.traverseToTop()
+    host.move_to(62320, 48769, 13180.0)
+    # host.traverseToTop()
+    host.map2dProfile()
+
+    # center = host.traverseToTop()
     # end = host.traverseToEnd(step=1_000)
 
     # focus()
@@ -67,4 +82,4 @@ finally:
     KoalaGui.turnLive(True)
     host.logout()
     if host.scan:
-        host.scan.viewXZPlane(hold=True)
+        host.scan.viewXZPlane(hold=False)
