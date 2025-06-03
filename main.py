@@ -59,13 +59,12 @@ try:
     KoalaGui.turnLive(False)
     host = KoalaController()
     host.setup()
-    host.loadScan(Scan(live=True))
 
     start = time.time()
     host.setLimit(h=8_000)
-    host.move_to(62320, 48769, 13180.0)
+    host.move_to(53045, 51043, 13615.6)
     # host.traverseToTop()
-    host.map2dProfile()
+    # host.map2dProfile()
 
     # center = host.traverseToTop()
     # end = host.traverseToEnd(step=1_000)
@@ -81,5 +80,5 @@ except Exception as err:
 finally:
     KoalaGui.turnLive(True)
     host.logout()
-    if host.scan:
-        host.scan.viewXZPlane(hold=False)
+    # if host.scan:
+    #     host.scan.viewXZPlane(hold=False)

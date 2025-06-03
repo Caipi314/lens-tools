@@ -7,23 +7,26 @@ import MaxContSearch
 
 
 class Scan:
-    def __init__(self, live):
+    def __init__(self, show):
+        self.show = show
         self.texts = []
         self.contPoints = []  # contains (x, y, z contrast)
         self.maxContSearches = []
         self.directionSearches = []
-        if live:
-            self.setupGraph()
+
+        self.setupGraph()
 
     def setupGraph(self):
+        if not self.show:
+            return
         plt.ion()
         self.fig, self.ax = plt.subplots(figsize=(10, 6))
-        self.norm = plt.Normalize(vmin=0, vmax=10)
+        norm = plt.Normalize(vmin=0, vmax=10)
         self.contSc = self.ax.scatter(
             [],
             [],
             c=[],
-            norm=self.norm,
+            norm=norm,
             cmap="jet",
             marker="o",
             s=40,
@@ -31,13 +34,13 @@ class Scan:
         )
         self.dirSearchSc1 = self.ax.scatter([], [], marker="_", s=60)
         self.dirSearchSc2 = self.ax.scatter(
-            [], [], c=[], norm=self.norm, cmap="jet", marker="o", s=30
+            [], [], c=[], norm=norm, cmap="jet", marker="o", s=30
         )
         # start and end points
         self.maxContSearchSc1 = self.ax.scatter([], [], marker="_", s=100)
         # contrast points
         self.maxContSearchSc2 = self.ax.scatter(
-            [], [], c=[], norm=self.norm, cmap="jet", marker=".", s=50
+            [], [], c=[], norm=norm, cmap="jet", marker=".", s=50
         )
 
         self.cbar = self.fig.colorbar(self.contSc, ax=self.ax)
@@ -56,6 +59,8 @@ class Scan:
         plt.tight_layout()
 
     def updateContPts(self):
+        if not self.show:
+            return
         x = [point["x"] for point in self.contPoints]
         z = [point["z"] for point in self.contPoints]
         cont = [point["cont"] for point in self.contPoints]
@@ -75,6 +80,8 @@ class Scan:
             self.texts.append(txt)
 
     def updateDirSearchPts(self):
+        if not self.show:
+            return
         startPts = []  # contains (x, z)
         contPts = []  # contains (x, z)
         contOfPts = []  # matches with contPts. contains contrasts
@@ -100,6 +107,8 @@ class Scan:
             self.texts.append(txt)
 
     def updateMaxContSearchPts(self):
+        if not self.show:
+            return
         endPts = []  # contains (x, z)
         contPts = []  # contains (x, z)
         contOfPts = []  # matches with contPts. contains contrasts
@@ -133,6 +142,8 @@ class Scan:
         self.ax.autoscale_view()
 
     def updateGraph(self):
+        if not self.show:
+            return
         # remove old annotations
         [txt.remove() for txt in self.texts]
         self.texts.clear()
@@ -151,13 +162,19 @@ class Scan:
         plt.pause(0.05)
 
     def logContrast(self, x, y, z, contrast):
+        if not self.show:
+            return
         self.contPoints.append({"x": x, "y": y, "z": z, "cont": contrast})
         self.updateGraph()
 
     def startLogMaxContSearch(self, search: MaxContSearch):
+        if not self.show:
+            return
         self.maxContSearches.append(search)
 
     def logDirectionSearch(self, x, y, z_start, maxContDirection, contrasts):
+        if not self.show:
+            return
         # contrasts is a dict where key is z relative to z_start, and value is contrast
         points = [{"z": z_start + dz, "cont": cont} for dz, cont in contrasts.items()]
         self.directionSearches.append(
@@ -172,8 +189,11 @@ class Scan:
         self.updateGraph()
 
     def viewXZPlane(self, hold=True):
+        if not self.show:
+            return
         plt.savefig("./datas/latestScan.png")
-        plt.ioff()
+        if self.show:
+            plt.ioff()
         if hold:
             print("holding graph open")
             plt.show()

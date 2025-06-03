@@ -2,7 +2,7 @@ import sys
 from datetime import datetime
 from MaxContSearch import MaxContSearch
 from Scan import Scan
-from Traversal import Traversal
+from Traversal import BadFit, Traversal
 import utils
 import struct
 import pathlib
@@ -62,9 +62,6 @@ class KoalaController:
         self.host.SetUnwrap2DMethod(0)
         self.host.OpenPhaseWin()
         time.sleep(0.1)
-
-    def loadScan(self, scan: Scan):
-        self.scan = scan
 
     def setLimit(self, h):
         if h < 500:
@@ -179,6 +176,11 @@ class KoalaController:
         if unit == 1:  # 1 = rad, 2 = m
             phase = phase * hconv * 1e6
         return phase, pxSize_um  # [um (height)], [um/px (x and y)]
+
+    def phaseAvg_um(self, avg=5):
+        phase0, pxSize = self.phase_um()
+        phases = [self.phase_um()[0] for _ in range(avg - 1)]
+        return np.mean(np.array([phase0, *phases]), axis=0), pxSize
 
     def getContrast(self, avg=5):
         contrasts = []
@@ -393,6 +395,7 @@ class KoalaController:
 
     def traverseToTop(self):
         """Returns the focused cords and contrast at the center (top)"""
+
         startCont, zStart = self.maximizeFocus()
 
         while True:
@@ -424,12 +427,15 @@ class KoalaController:
                 return edge
 
     def map2dProfile(self):
-        startCont, center = self.traverseToTop()
+        self.scan = Scan(show=False)
+        # startCont, center = self.traverseToTop()
+        center = self.getPos()
+        startCont = self.getContrast()
 
-        # Test pic to get barings
+        # Test pic to get pic size
         phase, pxSize = self.phase_um()
         picSize = np.array(phase.shape) * pxSize
-        trav = Traversal(center, picSize)
+        trav = Traversal(center, startCont, phase, picSize)
 
         #! first traverse from center to edge (becaus we don't know radius)
         for i in range(1075):  # half of the total stage
@@ -437,13 +443,26 @@ class KoalaController:
                 self.smart_move_rel(dx=trav.stepX)
 
                 MaxContSearch.dontTryAgain = True
-                self.ensureFocus(minContrast=startCont * 0.5)
+                cont, z = self.ensureFocus(minContrast=startCont * 0.5)
 
-                picPath = trav.getPicName()
-                self.phaseToTiff(picPath)
+                pos = self.getPos()
 
-                if i == 2:
-                    return
+                def takePic():
+                    try:
+                        phase, pxSize = self.phaseAvg_um(avg=10)
+                        trav.addToStitch(phase, pxSize, cont, pos, axis=1)
+                    except BadFit:
+                        print("Fit not acceptable, trying again")
+                        takePic()
+
+                takePic()
+
+                # picPath = trav.getPicName()
+                # self.phaseToTiff(picPath)
+
+                # if i == 2:
+                #     trav.keepOpen()
+                #     return
             except FocusNotFound:
                 trav.lostFocus(*self.getPos())
                 break
