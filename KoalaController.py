@@ -1,5 +1,6 @@
 import sys
 from datetime import datetime
+from GlobalSettings import GlobalSettings
 from MaxContSearch import MaxContSearch
 from Scan import Scan
 from Traversal import BadFit, Traversal
@@ -19,12 +20,6 @@ sys.path.append(r"C:\\Program Files\\LynceeTec\\Koala\\Remote\\Remote Libraries\
 clr.AddReference("LynceeTec.KoalaRemote.Client")
 from LynceeTec.KoalaRemote.Client import KoalaRemoteClient
 
-# MAX_Z = 2_962
-IDEAL_NOISE_CUTOFF = 2.2  # 1.95
-LOWEST_NOISE_CUTOFF = 1.7
-ABS_MAX_Z = 27175.0  # um. Max z with no lens or holder on the stage
-MID_Y = 52_500
-
 
 class FocusNotFound(Exception):
     """Contrast never decreased"""
@@ -42,6 +37,7 @@ class InvalidMove(Exception):
 class KoalaController:
     def __init__(self, host="localhost", user="user", passw="user"):
         self.basePath = pathlib.Path.cwd()
+        self.settings = GlobalSettings()
         self.host = KoalaRemoteClient()
         ret, username = self.host.Connect(
             host, user, True
@@ -58,7 +54,7 @@ class KoalaController:
         self.focusDist = (
             27175 - 13207 - (7.66 - 0.16) * 1e3
         )  # d_focus = Z_max - Z_focus - h_real #! calibrated dont touch now
-        self.ABS_MAX_H = ABS_MAX_Z - self.focusDist
+        self.ABS_MAX_H = self.settings.get("ABS_MAX_Z") - self.focusDist
         self.host.SetUnwrap2DMethod(0)
         self.host.OpenPhaseWin()
         time.sleep(0.1)
@@ -66,7 +62,7 @@ class KoalaController:
     def setLimit(self, h):
         if h < 500:
             raise Exception("Please give h in um to host.setMinH(h)")
-        self.maxZ = ABS_MAX_Z - h
+        self.maxZ = self.settings.get("ABS_MAX_Z") - h
 
     def getPos(self):
         buffer = System.Array.CreateInstance(System.Double, 4)
@@ -74,12 +70,12 @@ class KoalaController:
         return np.array([buffer[0], buffer[1], buffer[2] / 10])
 
     def hToZ(self, h):
-        return ABS_MAX_Z - self.focusDist - h
+        return self.settings.get("ABS_MAX_Z") - self.focusDist - h
 
     def zToH(self, z):
         if z == None:
             raise Exception(f"Cannot convert z to h when z = {z}")
-        return ABS_MAX_Z - self.focusDist - z
+        return self.settings.get("ABS_MAX_Z") - self.focusDist - z
 
     def move_to(self, x=0, y=0, z=0, h=0, fatal=True, fast=False):
         """MUST SET self.maxZ in order to move the Z axis"""
@@ -87,12 +83,12 @@ class KoalaController:
         # * give Z in joystick/real heights
         # * h is height of surface from stage.
         if h != 0:
-            z = ABS_MAX_Z - h
+            z = self.settings.get("ABS_MAX_Z") - h
 
         if z != 0:
             if self.maxZ == None:
                 raise Exception("Tried to move without setting self.maxZ")
-            if z < 0 or z > ABS_MAX_Z or z > self.maxZ:
+            if z < 0 or z > self.settings.get("ABS_MAX_Z") or z > self.maxZ:
                 if fatal:
                     raise InvalidMove(z)
                 else:
@@ -237,7 +233,7 @@ class KoalaController:
                 0,
                 maxZ,
                 direction,
-                minContrast=IDEAL_NOISE_CUTOFF,
+                minContrast=self.settings.get("IDEAL_NOISE_CUTOFF"),
                 step=200,
                 avg=5,
             )
@@ -269,15 +265,16 @@ class KoalaController:
         print(f"Found focus @ z = {int(zFocus)}")
         return I[1]
 
-    def find_maximising_dir(self, minContrast, dist=25):
+    def find_maximising_dir(self, minContrast):
         """Go up and down a bit and see which direction has increasing contrast. Then goes to the less focused point
         MUST CATCH FocusNotFound Error"""
 
         x, y, startZ = self.getPos()
         contrasts = {}  # kv pairs of dz: contrast
+        dist = self.settings.get("FIND_DIR_DIST")
         for dz in [-dist, dist, 0]:
             self.move_to(z=startZ + dz, fast=True)
-            contrast = self.getContrast(avg=dist + 1)  # fast huristic for avg
+            contrast = self.getContrast(avg=dist // 5 + 1)  # fast huristic for avg
             contrasts[dz] = contrast
 
         maxDz = max(contrasts, key=contrasts.get)
@@ -294,8 +291,11 @@ class KoalaController:
 
         return maximisingDir
 
-    def maximizeFocus(self, minContrast=IDEAL_NOISE_CUTOFF):
+    def maximizeFocus(self, minContrast=None):
         """Does a direction search, then a maxContrast search. if directino search fails, does a total search. Will propogate FocusNotFound only if the total search fails or a maxZ is not set. Return the (contrast, z) at max contrast"""
+        if minContrast == None:
+            minContrast = self.settings.get("IDEAL_NOISE_CUTOFF")
+
         maximisingDir = None
         try:
             maximisingDir = self.find_maximising_dir(minContrast)

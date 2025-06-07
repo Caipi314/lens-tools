@@ -3,6 +3,8 @@ import time
 import dearpygui.dearpygui as dpg
 from PIL import Image
 
+from GlobalSettings import GlobalSettings
+
 
 dpg.create_context()
 
@@ -78,6 +80,10 @@ with dpg.theme() as global_theme:
             dpg.mvStyleVar_WindowBorderSize, 0, category=dpg.mvThemeCat_Core
         )
 dpg.bind_theme(global_theme)
+
+with dpg.theme() as ModalTheme:
+    with dpg.theme_component(dpg.mvAll):
+        dpg.add_theme_color(dpg.mvThemeCol_WindowBg, (52, 152, 219, 255))  # RGBA format
 
 with dpg.theme() as btnTheme:
     with dpg.theme_component(dpg.mvAll):
@@ -178,6 +184,15 @@ def stopBtn():
     dpg.bind_item_theme(f"overlayBtn-stop", overlayStopBtn)
 
 
+settings = GlobalSettings()
+
+
+def showSettingsModal():
+    for settingKey in settings.keys():
+        dpg.set_value(settingKey, settings[settingKey]["value"])
+    dpg.configure_item("SettingsModal", show=True)
+
+
 with dpg.window(tag="MainWindow", no_resize=True, no_move=True):
     # ? Title Area
     with dpg.group(horizontal=True):
@@ -234,7 +249,7 @@ with dpg.window(tag="MainWindow", no_resize=True, no_move=True):
                 texture_tag="gear",
                 width=40,
                 height=40,
-                callback=lambda: dpg.configure_item("SettingsModal", show=True),
+                callback=showSettingsModal,
             )
 
     dpg.add_spacer(height=10)
@@ -315,10 +330,13 @@ with dpg.window(
         dpg.add_button(label="Start", callback=onGo, tag="goBtn")
     dpg.bind_item_theme("goBtn", goBtn)
 
+
 with dpg.window(
     tag="SettingsModal",
     modal=True,
-    show=False,
+    show=True,
+    no_resize=True,
+    # show=False, # TODO uncomment
     no_title_bar=True,
     no_move=True,
     width=650,
@@ -326,36 +344,62 @@ with dpg.window(
     pos=(300, 120),
 ):
 
-    def setting(name, description, initialValue):
+    def settingRow(settingKey):
+        name = settings[settingKey]["name"]
+        type = settings[settingKey]["type"]
+        initialValue = settings[settingKey]["value"]
+        description = settings[settingKey]["description"]
+        print(initialValue)
+
+        def onChange(_sender, value):
+            settings.stageValue(settingKey, value)
+
+        # name, description, initialValue
         with dpg.group(horizontal=True):
             dpg.add_text(name)
             dpg.add_spacer(width=30)
-            dpg.add_input_float(label="", width=200, default_value=initialValue)
+            if type == "int":
+                dpg.add_input_int(
+                    tag=settingKey,
+                    width=180,
+                    default_value=initialValue,
+                    callback=onChange,
+                )
+            elif type == "float":
+                dpg.add_input_float(
+                    tag=settingKey,
+                    width=180,
+                    default_value=initialValue,
+                    callback=onChange,
+                )
+            else:
+                dpg.add_input_text(
+                    tag=settingKey,
+                    width=180,
+                    default_value=initialValue,
+                    callback=onChange,
+                )
         desc = dpg.add_text(description, wrap=500)
         dpg.bind_item_font(desc, smallFont)
         dpg.add_spacer(height=20)
 
     def onCancel():
-        # TODO reset settings back to stored value
-        dpg.configure_item("SettingsModal", show=False),
+        dpg.configure_item("SettingsModal", show=False)
 
     def onReset():
-        # TODO reset items to stored value
-        dpg.configure_item("SettingsModal", show=False),
+        settings.reset()
+        showSettingsModal()
 
     def onSave():
-        # TODO store saved items
-        dpg.configure_item("SettingsModal", show=False),
+        settings.writeStaged()
+        dpg.configure_item("SettingsModal", show=False)
 
     title = dpg.add_text("Settings")
     dpg.bind_item_font(title, titleFont)
     dpg.add_spacer(height=40)
 
-    setting(
-        "Minimum Noise Cutoff",
-        "A value which the contrast will not exceed while looking at static",
-        2.2,
-    )
+    for settingKey in settings.keys():
+        settingRow(settingKey)
     with dpg.group(horizontal=True):
         dpg.add_button(label="Cancel", callback=onCancel)
         dpg.add_spacer(width=88)
@@ -363,8 +407,7 @@ with dpg.window(
         dpg.add_spacer(width=88)
         dpg.add_button(label="Save", callback=onSave, tag="saveBtn")
 
-
-dpg.create_viewport(title="Lens Tools", width=1200, height=550)
+dpg.create_viewport(title="Lens Tools", width=1200, height=800)
 
 dpg.setup_dearpygui()
 dpg.show_viewport()
