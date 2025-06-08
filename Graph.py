@@ -191,18 +191,8 @@ class Graph:
         self.updateViewLimits()
 
         # Draw canvas
-        t0 = time.time()
         self.fig.canvas.draw_idle()
         self.fig.canvas.flush_events()
-        t_draw = time.time() - t0
-
-        total_time = time.time() - start_total
-
-        with open("./datas/timing.txt", "a") as f:
-            print(
-                f"Graph Update Times (s): Draw: {t_draw:.3f}, Total time:  {total_time:.3f}",
-                file=f,
-            )
 
     def logContrast(self, x, y, z, contrast):
         self.contPoints.append({"x": x, "y": y, "z": z, "cont": contrast})
@@ -231,8 +221,11 @@ class Graph:
         self.directionSearches = []
         self.updateGraph()
 
-    def saveToFiles(self):
+    def saveToFiles(self, show=False):
         plt.ioff()
+        if show:
+            print("holding pic open")
+            plt.show()
 
         plt.savefig(str(self.areaMap.absFolderPath / "traversal.png"))
         plt.close()

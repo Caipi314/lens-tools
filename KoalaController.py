@@ -362,7 +362,7 @@ class KoalaController:
         phase, pxSize = self.phase_um()
 
         # quadratic doesn't outperform planer fits
-        a, b, c = utils.fit_plane(phase, pxSize, returnCoefs=True)
+        a, b, c = utils.fit_plane(phase, pxSize)
         dh = a * dx + b * dy
 
         print(f"For dx={int(dx)}, added dz={int(dh)}")
@@ -375,7 +375,7 @@ class KoalaController:
         phase, pxSize = self.phase_um()
 
         # so far, quadratic doesn't outperform planer fits
-        a, b, c = utils.fit_plane(phase, pxSize, returnCoefs=True)
+        a, b, c = utils.fit_plane(phase, pxSize)
         grad = np.array([a, b])
         mag = np.linalg.norm(grad)
         dx, dy = grad * speed if mag * speed <= maxStep else maxStep * grad / mag
@@ -402,6 +402,8 @@ class KoalaController:
     def mapRow(self, row: Row):
         """Asumes we are focused at the center of the row. The row has already been initialized at the center"""
         startCont = self.getContrast()
+        pos = self.getPos()
+        self.scan.logContrast(*pos, startCont)
 
         while not row.done:
             t0 = time.time()
@@ -434,7 +436,8 @@ class KoalaController:
         # self.scan = Scan(show=True)
         # startCont, center = self.traverseToTop()
         # self.scan.saveToFiles()
-        self.move_to(50494, 52876, 12267)  # TODO replace with above after testing
+        # TODO replace with above after testing
+        self.move_to(50459, 52864, 12267.2)
         center = self.getPos()
 
         phase, pxSize = self.phaseAvg_um(avg=5)
@@ -444,13 +447,12 @@ class KoalaController:
         row.initCenter(phase, pxSize, center, None)
         self.mapRow(row)
 
-        self.scan.saveToFiles()
+        self.scan.saveToFiles(show=True)  # TODO should be False
 
     def mapArea(self, maxRadius=None):
         # self.scan = Scan(show=True)
         # startCont, center = self.traverseToTop()
         # self.scan.saveToFiles()
-
         # TODO replace with above after testing
         self.move_to(50459, 52864, 12267.2)
         center = self.getPos()

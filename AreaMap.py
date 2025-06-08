@@ -7,6 +7,7 @@ from matplotlib import pyplot as plt
 import numpy as np
 from Row import Row
 from Traversal import BadFit
+import utils
 
 
 class AreaMap:
@@ -61,24 +62,6 @@ class AreaMap:
             self.done = True
 
     def getShift(self, lastPic, currentPic):
-        def getZDiff(dx, dy, f1Area, f2Area):
-            """Used in stitchX to see required constant offset to add to pic2"""
-            # make sure we're averaging over the same part
-            ySlice1 = ySlice2 = xSlice1 = xSlice2 = slice(None)
-            if dx > 0:
-                xSlice1, xSlice2 = slice(dx, None), slice(None, -dx)
-            elif dx < 0:
-                xSlice1, xSlice2 = slice(None, dx), slice(-dx, None)
-            if dy > 0:
-                ySlice1, ySlice2 = slice(dy, None), slice(None, -dy)
-            elif dy < 0:
-                ySlice1, ySlice2 = slice(None, dy), slice(-dy, None)
-
-            zDiff = np.mean(f1Area[ySlice1, xSlice1] - f2Area[ySlice2, xSlice2])
-
-            print(f"Stitch has dx={dx}, dy={dy}, zDiff={zDiff:.2f}")
-            return zDiff
-
         """takes 2 pictures. One is the last row's center pic, and a the other is the pic of the current row's center, and gets the shift to stitch pic2 ON TOP of pic1."""
         # if currentPic.
         if self.moveDir == -1:
@@ -95,9 +78,9 @@ class AreaMap:
             print(f"Fit not acceptable (dx={dx}), trying again")
             raise BadFit
 
-        zDiff = getZDiff(dx, dy, f1Area, f2Area)
+        zDiff = utils.getZDiff(dx, dy, f1Area, f2Area)
         print(f"Shift between rows is dx={dx} dy={dy}. zDiff={zDiff}")
-        return (dy, dx), zDiff
+        return (dy, dx), -zDiff
 
     def saveImages(self):
         """Saves .npy array and png image of the stitch and profile"""
