@@ -156,7 +156,7 @@ class KoalaController:
         try:
             self.host.SaveImageFloatToFile(4, fpath, True)
         except Exception as err:
-            print(err)
+            print("err in SaveImageFloatToFile")
             return self.phase_um()
 
         with open(fpath, "rb") as f:
@@ -444,10 +444,10 @@ class KoalaController:
         areaMap = AreaMap(True, phase.shape, pxSize, maxRadius)
         self.scan = Graph(areaMap=areaMap)
         row = areaMap.nextRow()
-        row.initCenter(phase, pxSize, center, None)
+        row.initCenter(phase, pxSize, center, None, 0)
         self.mapRow(row)
 
-        self.scan.saveToFiles(show=True)  # TODO should be False
+        self.scan.saveToFiles()
 
     def mapArea(self, maxRadius=None):
         # self.scan = Scan(show=True)
@@ -461,12 +461,14 @@ class KoalaController:
         areaMap = AreaMap(True, phase.shape, pxSize, maxRadius)
         self.scan = Graph(areaMap=areaMap)
         row = areaMap.nextRow()
-        row.initCenter(phase, pxSize, center, None)
+        row.initCenter(phase, pxSize, center, None, 0)
 
         # * for each row:
         while not areaMap.done:
             self.scan.clear()
-            self.mapRow(row)
+            if not row.done:
+                self.mapRow(row)
+                areaMap.addToStitch(row)
 
             self.smart_move_rel(dy=areaMap.moveDir * areaMap.stepY)
             startCont = self.getContrast()
@@ -496,7 +498,7 @@ class KoalaController:
             else:
                 raise Exception("Could not find a valid stitch")  # not caught
 
-        self.scan.saveToFiles()
+        self.scan.saveToFiles(show=False)
 
     def logout(self):
         """Logout from the Koala remote client."""

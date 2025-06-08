@@ -140,20 +140,25 @@ class Graph:
     def updateAreaMap(self):
         # for now just crudely stick them together
         self.map.clear()
-        stitches = [
-            row.stitch[: -AreaMap.yOverlap, :] - row.zDiff for row in self.areaMap.rows
-        ]
+        # stitches = [
+        #     row.stitch[: -AreaMap.yOverlap, :] - row.zDiff for row in self.areaMap.rows
+        # ]
 
-        max_cols = max(arr.shape[1] for arr in stitches)
+        # max_cols = max(arr.shape[1] for arr in stitches)
 
-        # Pad each array to match the max dimensions
-        padded_arrays = [
-            np.pad(arr, ((0, 0), (0, max_cols - arr.shape[1])), constant_values=np.nan)
-            for arr in stitches
-        ]
+        # # Pad each array to match the max dimensions
+        # padded_arrays = [
+        #     np.pad(arr, ((0, 0), (0, max_cols - arr.shape[1])), constant_values=np.nan)
+        #     for arr in stitches
+        # ]
 
-        # Stack the padded arrays
-        stitch = np.vstack(padded_arrays)
+        # # Stack the padded arrays
+        # stitch = np.vstack(padded_arrays)
+        stitch = (
+            self.areaMap.stitch
+            if self.areaMap.stitch is not None
+            else self.areaMap.rows[-1].stitch
+        )
 
         step = math.ceil(math.prod(stitch.shape) / (800 * 800 * 5))
         stitch = stitch[::step, ::step]

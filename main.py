@@ -65,6 +65,7 @@ try:
     # host.mapProfile(maxRadius=5_000)
     host.mapProfile(maxRadius=500)
     # host.mapArea(maxRadius=300)
+    # host.mapArea(maxRadius=1_000)
 
     # host.map2dProfile(radius=5_000)
 
