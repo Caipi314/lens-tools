@@ -1,6 +1,12 @@
+import asyncio
 import sys
 from datetime import datetime
+from GlobalSettings import GlobalSettings
+import threading
+from Graph import Graph
+from AreaMap import AreaMap
 from MaxContSearch import MaxContSearch
+from Row import Row
 from Scan import Scan
 from Traversal import BadFit, Traversal
 import utils
@@ -19,12 +25,6 @@ sys.path.append(r"C:\\Program Files\\LynceeTec\\Koala\\Remote\\Remote Libraries\
 clr.AddReference("LynceeTec.KoalaRemote.Client")
 from LynceeTec.KoalaRemote.Client import KoalaRemoteClient
 
-# MAX_Z = 2_962
-IDEAL_NOISE_CUTOFF = 2.2  # 1.95
-LOWEST_NOISE_CUTOFF = 1.7
-ABS_MAX_Z = 27175.0  # um. Max z with no lens or holder on the stage
-MID_Y = 52_500
-
 
 class FocusNotFound(Exception):
     """Contrast never decreased"""
@@ -42,6 +42,7 @@ class InvalidMove(Exception):
 class KoalaController:
     def __init__(self, host="localhost", user="user", passw="user"):
         self.basePath = pathlib.Path.cwd()
+        self.settings = GlobalSettings()
         self.host = KoalaRemoteClient()
         ret, username = self.host.Connect(
             host, user, True
@@ -49,16 +50,16 @@ class KoalaController:
         self.host.Login(passw)
         self.maxZ = None
         self.scan = None
+        # d_focus = Z_max - Z_focus - h_real #! calibrated dont touch now
+        self.focusDist = 27175 - 13207 - (7.66 - 0.16) * 1e3
+        self.ABS_MAX_H = self.settings.get("ABS_MAX_Z") - self.focusDist
+        self.scan = Scan(show=False)
 
     def setup(self):
         """Initialize configuration and source state."""
         self.host.OpenConfig(142)  # for 20x objective
         self.host.SetSourceState(0, True, True)
         self.pxSize = self.host.GetPxSizeUm()
-        self.focusDist = (
-            27175 - 13207 - (7.66 - 0.16) * 1e3
-        )  # d_focus = Z_max - Z_focus - h_real #! calibrated dont touch now
-        self.ABS_MAX_H = ABS_MAX_Z - self.focusDist
         self.host.SetUnwrap2DMethod(0)
         self.host.OpenPhaseWin()
         time.sleep(0.1)
@@ -66,7 +67,7 @@ class KoalaController:
     def setLimit(self, h):
         if h < 500:
             raise Exception("Please give h in um to host.setMinH(h)")
-        self.maxZ = ABS_MAX_Z - h
+        self.maxZ = self.settings.get("ABS_MAX_Z") - h
 
     def getPos(self):
         buffer = System.Array.CreateInstance(System.Double, 4)
@@ -74,12 +75,12 @@ class KoalaController:
         return np.array([buffer[0], buffer[1], buffer[2] / 10])
 
     def hToZ(self, h):
-        return ABS_MAX_Z - self.focusDist - h
+        return self.settings.get("ABS_MAX_Z") - self.focusDist - h
 
     def zToH(self, z):
         if z == None:
             raise Exception(f"Cannot convert z to h when z = {z}")
-        return ABS_MAX_Z - self.focusDist - z
+        return self.settings.get("ABS_MAX_Z") - self.focusDist - z
 
     def move_to(self, x=0, y=0, z=0, h=0, fatal=True, fast=False):
         """MUST SET self.maxZ in order to move the Z axis"""
@@ -87,12 +88,12 @@ class KoalaController:
         # * give Z in joystick/real heights
         # * h is height of surface from stage.
         if h != 0:
-            z = ABS_MAX_Z - h
+            z = self.settings.get("ABS_MAX_Z") - h
 
         if z != 0:
             if self.maxZ == None:
                 raise Exception("Tried to move without setting self.maxZ")
-            if z < 0 or z > ABS_MAX_Z or z > self.maxZ:
+            if z < 0 or z > self.settings.get("ABS_MAX_Z") or z > self.maxZ:
                 if fatal:
                     raise InvalidMove(z)
                 else:
@@ -117,34 +118,32 @@ class KoalaController:
             time.sleep(0.4)
         return ok
 
-    def move_rel(self, dx=0, dy=0, dz=0):
+    def move_rel(self, dx=0, dy=0, dz=0, fast=False):
         # TODO should prbably put in z safeguard
-        return self.host.MoveAxes(
-            False,
-            bool(dx != 0),
-            bool(dy != 0),
-            bool(dz != 0),
-            False,
-            int(dx),
-            int(dy),
-            int(dz * 10),
-            0,
-            1,
-            1,
-            1,
-            1,
-            True,
-        )
+        def move():
+            return self.host.MoveAxes(
+                False,
+                bool(dx != 0),
+                bool(dy != 0),
+                bool(dz != 0),
+                False,
+                int(dx),
+                int(dy),
+                int(dz * 10),
+                0,
+                1,
+                1,
+                1,
+                1,
+                not fast,
+            )
 
-    def phaseToTiff(self, absPath):
-        self.host.SingleReconstruction()
-        self.host.SetUnwrap2DState(True)
-
-        try:
-            self.host.SaveImageToFile(4, str(absPath))
-        except Exception as err:
-            print(err)
-            return self.phaseToTiff(absPath)
+        if fast:
+            thread = threading.Thread(target=move)
+            thread.start()
+            time.sleep(self.settings.get("FAST_MOVE_REL_TIME"))
+        else:
+            return move()
 
     def phase_um(self):
         """Load phase image to file, then read file and return numpy array with height in um"""
@@ -172,15 +171,16 @@ class KoalaController:
             unit = struct.unpack("b", f.read(1))[0]
             phase = np.fromfile(f, np.float32).reshape(height, width)
 
-        # [rad] * [m/rad] * [um/m] * 10 (z factor thing trust be bro)
+        # [rad] * [m/rad] * [um/m]
         if unit == 1:  # 1 = rad, 2 = m
             phase = phase * hconv * 1e6
         return phase, pxSize_um  # [um (height)], [um/px (x and y)]
 
     def phaseAvg_um(self, avg=5):
+        avg = max(avg - 1, 0)
         phase0, pxSize = self.phase_um()
-        phases = [self.phase_um()[0] for _ in range(avg - 1)]
-        return np.mean(np.array([phase0, *phases]), axis=0), pxSize
+        phases = [self.phase_um()[0] for _ in range(avg)]
+        return np.mean((phase0, *phases), axis=0), pxSize
 
     def getContrast(self, avg=5):
         contrasts = []
@@ -237,7 +237,7 @@ class KoalaController:
                 0,
                 maxZ,
                 direction,
-                minContrast=IDEAL_NOISE_CUTOFF,
+                minContrast=self.settings.get("IDEAL_NOISE_CUTOFF"),
                 step=200,
                 avg=5,
             )
@@ -269,15 +269,16 @@ class KoalaController:
         print(f"Found focus @ z = {int(zFocus)}")
         return I[1]
 
-    def find_maximising_dir(self, minContrast, dist=25):
+    def find_maximising_dir(self, minContrast):
         """Go up and down a bit and see which direction has increasing contrast. Then goes to the less focused point
         MUST CATCH FocusNotFound Error"""
 
         x, y, startZ = self.getPos()
         contrasts = {}  # kv pairs of dz: contrast
+        dist = self.settings.get("FIND_DIR_DIST")
         for dz in [-dist, dist, 0]:
             self.move_to(z=startZ + dz, fast=True)
-            contrast = self.getContrast(avg=dist + 1)  # fast huristic for avg
+            contrast = self.getContrast(avg=dist // 5 + 1)  # fast huristic for avg
             contrasts[dz] = contrast
 
         maxDz = max(contrasts, key=contrasts.get)
@@ -294,13 +295,16 @@ class KoalaController:
 
         return maximisingDir
 
-    def maximizeFocus(self, minContrast=IDEAL_NOISE_CUTOFF):
-        """Does a direction search, then a maxContrast search. if directino search fails, does a total search. Will propogate FocusNotFound only if the total search fails or a maxZ is not set. Return the (contrast, z) at max contrast"""
+    def maximizeFocus(self, minContrast=None):
+        """Does a direction search, then a maxContrast search. if directino search fails, does a total search. Will propogate FocusNotFound only if the total search fails or a maxZ is not set. Return the (contrast, pos) at max contrast"""
+        if minContrast == None:
+            minContrast = self.settings.get("IDEAL_NOISE_CUTOFF")
+
         maximisingDir = None
         try:
             maximisingDir = self.find_maximising_dir(minContrast)
             if maximisingDir == 0:
-                return self.getContrast(), self.getPos()[2]  # already focused
+                return self.getContrast(), self.getPos()  # already focused
         except FocusNotFound:
             print(
                 "find_maximising_dir could not determine focus direction. Doing a total search"
@@ -335,48 +339,36 @@ class KoalaController:
             )
             print(f"Found focus {I[1][0]} @ z = {int(I[1][1])}")
             self.move_to(z=I[1][1])
-            return I[1]
+            return I[1][0], self.getPos()
         except FocusNotFound:  # maybe we got maximising direction wrong?
             print("No focus found. Trying total search")
             # will throw if found nothing
             return self.find_focus()
 
-    def ensureFocus(self, minContrast):
-        """Sees if focused, if not, maximizesFocus. Returns (contrast, z)"""
-        cont = self.getContrast(avg=5)
+    def ensureFocus(self, minContrast, avg=5):
+        """Sees if focused, if not, maximizesFocus. Returns (contrast, pos)"""
+        cont = self.getContrast(avg=avg)
         pos = self.getPos()
+
         self.scan.logContrast(*pos, cont)
         print(f"Contrast is {cont:.2f}")
 
         # Could make this more advanced, where min contrast could be a functino of how big your step was, and your slope
         if cont > minContrast:
-            return cont, pos[2]  # already focused
+            return cont, pos  # already focused
         return self.maximizeFocus()
 
-    def smart_move_rel(self, dx=0, dy=0):
+    def smart_move_rel(self, dx=0, dy=0, fast=False):
         phase, pxSize = self.phase_um()
 
-        y_1, x_1 = np.array(phase.shape) * pxSize / 2  # center point of image
-        y_2, x_2 = y_1 + dy, x_1 + dx
-
-        # so far, quadratic doesn't outperform planer fits
-        fit_func = utils.fit_plane(phase, pxSize, returnCoefs=False)
-        dh = fit_func(x_2, y_2) - fit_func(x_1, y_1)
+        # quadratic doesn't outperform planer fits
+        a, b, c = utils.fit_plane(phase, pxSize, returnCoefs=True)
+        dh = a * dx + b * dy
 
         print(f"For dx={int(dx)}, added dz={int(dh)}")
-
+        self.move_rel(dx, dy, -dh, fast=fast)
         # -dh because the phase picture is calculating heights, and higher things mean lower z
-        self.move_rel(dx, dy, -dh)
-        return dh
-
-    def traverse(self, x=0, step=100):
-        startCont = self.getContrast(avg=5)
-
-        sumZ = 0
-        for i in range(x // step):
-            sumZ += self.smart_move_rel(dx=step)
-            self.ensureFocus(minContrast=startCont * 0.5)
-        print(f"Sum delta_Z={sumZ:.1f} to traverse {x/1000}mm")
+        return -dh
 
     def traverseUp(self, speed=100_000, maxStep=300):
         # ?* Assumes already focused
@@ -396,10 +388,10 @@ class KoalaController:
     def traverseToTop(self):
         """Returns the focused cords and contrast at the center (top)"""
 
-        startCont, zStart = self.maximizeFocus()
+        startCont, pos = self.maximizeFocus()
 
-        while True:
-            dz = self.traverseUp(speed=100_000, maxStep=1_000)
+        for i in range(1000):
+            dz = self.traverseUp(speed=50_000 - i * 50, maxStep=1_000)
             cont, z = self.ensureFocus(minContrast=startCont * 0.5)
             # self.maximizeFocus()
             if dz < 0.01:
@@ -407,86 +399,102 @@ class KoalaController:
                 print(f"Top is at {center}")
                 return cont, center
 
-    def traverseToEnd(self, step=100):
-        """Traverses to the end of a lens until you can't find the contrast. Returns the position of the end"""
-        startCont, zStart = self.maximizeFocus()
-
-        sag = 0
-        while True:
-            try:
-                dz = self.smart_move_rel(dx=step)
-                sag += dz
-                print(f"Sag is at least {sag/1000:.2f}mm")
-
-                MaxContSearch.dontTryAgain = True
-                self.ensureFocus(minContrast=startCont * 0.5)
-            except FocusNotFound:
-                x, y, z = self.getPos()
-                edge = (x - step, y, z)
-                print(f"Edge is at {edge}")
-                return edge
-
-    def map2dProfile(self):
-        self.scan = Scan(show=False)
-        # startCont, center = self.traverseToTop()
-        center = self.getPos()
+    def mapRow(self, row: Row):
+        """Asumes we are focused at the center of the row. The row has already been initialized at the center"""
         startCont = self.getContrast()
 
-        # Test pic to get pic size
-        phase, pxSize = self.phase_um()
-        picSize = np.array(phase.shape) * pxSize
-        trav = Traversal(center, startCont, phase, picSize)
+        while not row.done:
+            t0 = time.time()
+            self.smart_move_rel(dx=row.moveDir * row.stepX, fast=True)
 
-        #! first traverse from center to edge (becaus we don't know radius)
-        for i in range(1075):  # half of the total stage
             try:
-                self.smart_move_rel(dx=trav.stepX)
-
                 MaxContSearch.dontTryAgain = True
-                cont, z = self.ensureFocus(minContrast=startCont * 0.5)
+                cont, (x, y, z) = self.ensureFocus(minContrast=startCont * 0.5, avg=3)
 
-                pos = self.getPos()
-
-                def takePic():
-                    try:
-                        phase, pxSize = self.phaseAvg_um(avg=10)
-                        trav.addToStitch(phase, pxSize, cont, pos, axis=1)
-                    except BadFit:
-                        print("Fit not acceptable, trying again")
-                        takePic()
-
-                takePic()
-
-                # picPath = trav.getPicName()
-                # self.phaseToTiff(picPath)
-
-                # if i == 2:
-                #     trav.keepOpen()
-                #     return
+                if row.prematureEdge(x):
+                    raise FocusNotFound
             except FocusNotFound:
-                trav.lostFocus(*self.getPos())
-                break
+                row.atEdge(*self.getPos())
+                self.move_to(*row.centerPos)
+                continue
 
-        self.move_to(*center)
-        # *The center picture actually gets taken on the first iter of the second loop
+            for i in range(1000):  # try 1000 times at maximum
+                try:
+                    phase, _ = self.phaseAvg_um(avg=i // 100)
+                    row.addToStitch(phase)
+                    break
+                except BadFit:
+                    ...
+            else:
+                raise Exception("Could not find a valid stitch")  # not caught
+            picTime = time.time() - t0
+            print(f"Pic time: {picTime:.3f}s")
 
-        # ? Can increase speed by assuming symmetrical
-        for _ in range(self.radius / self.stepX):
-            self.ensureFocus(minContrast=startCont * 0.5)
+    def mapProfile(self, maxRadius=None):
+        # self.scan = Scan(show=True)
+        # startCont, center = self.traverseToTop()
+        # self.scan.saveToFiles()
+        self.move_to(50494, 52876, 12267)  # TODO replace with above after testing
+        center = self.getPos()
 
-            picPath = trav.getPicName()
-            self.phaseToTiff(picPath)
+        phase, pxSize = self.phaseAvg_um(avg=5)
+        areaMap = AreaMap(True, phase.shape, pxSize, maxRadius)
+        self.scan = Graph(areaMap=areaMap)
+        row = areaMap.nextRow()
+        row.initCenter(phase, pxSize, center, None)
+        self.mapRow(row)
 
-            self.smart_move_rel(dx=-trav.stepX)
+        self.scan.saveToFiles()
 
-        # dx = picSize[1] - overlapXY
-        # totalSize = int(n * picSize[1] - (n - 1) * overlapXY)
+    def mapArea(self, maxRadius=None):
+        # self.scan = Scan(show=True)
+        # startCont, center = self.traverseToTop()
+        # self.scan.saveToFiles()
 
-        # for i in range(n):
-        # absPath = self.basePath / folder / f"{baseName}_00001_{i+1:05}.bin"
-        # absPath = self.basePath / folder / f"{baseName}_{i:05}.bin"
-        # self.phaseToFile(absPath)
-        # self.smart_move_rel(dx=dx)
+        # TODO replace with above after testing
+        self.move_to(50459, 52864, 12267.2)
+        center = self.getPos()
+
+        phase, pxSize = self.phaseAvg_um(avg=1)
+        areaMap = AreaMap(True, phase.shape, pxSize, maxRadius)
+        self.scan = Graph(areaMap=areaMap)
+        row = areaMap.nextRow()
+        row.initCenter(phase, pxSize, center, None)
+
+        # * for each row:
+        while not areaMap.done:
+            self.scan.clear()
+            self.mapRow(row)
+
+            self.smart_move_rel(dy=areaMap.moveDir * areaMap.stepY)
+            startCont = self.getContrast()
+            pos = self.getPos()
+
+            try:
+                MaxContSearch.dontTryAgain = True
+                cont, (x, y, z) = self.ensureFocus(minContrast=startCont * 0.5, avg=3)
+
+                if areaMap.prematureEdge(y):
+                    raise FocusNotFound
+            except FocusNotFound:
+                areaMap.atEdge(*pos)
+                row = areaMap.centerRow  # so that the next row stitches correctly
+                self.move_to(*center)
+                continue
+
+            for i in range(1000):  # try 1000 times at maximum
+                try:
+                    phase, _ = self.phaseAvg_um(avg=i // 100)
+                    shift, zDiff = areaMap.getShift(row.centerPic, phase)
+                    row = areaMap.nextRow()
+                    row.initCenter(phase, pxSize, pos, shift, zDiff)
+                    break
+                except BadFit:
+                    ...
+            else:
+                raise Exception("Could not find a valid stitch")  # not caught
+
+        self.scan.saveToFiles()
 
     def logout(self):
         """Logout from the Koala remote client."""

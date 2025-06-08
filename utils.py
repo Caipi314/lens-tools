@@ -2,6 +2,7 @@ import numpy as np
 import pathlib
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
+from scipy.ndimage import gaussian_filter
 import struct
 
 
@@ -31,12 +32,13 @@ def plot3D(phase, pxSize, plane):
     plt.show()
 
 
-def load_phase_file():
+def load_phase_file(path=None):
     # dump the displayed phase as a .bin file
     basePath = pathlib.Path.cwd()
-    fpath = str(basePath / "./tmp/phase.bin")
+    if path == None:
+        path = str(basePath / "./tmp/phase.bin")
 
-    with open(fpath, "rb") as f:
+    with open(path, "rb") as f:
         hdr_ver, endian = struct.unpack("bb", f.read(2))
         int32 = "<i" if endian == 0 else ">i"
         float32 = "<f" if endian == 0 else ">f"
@@ -48,10 +50,42 @@ def load_phase_file():
         unit = struct.unpack("b", f.read(1))[0]
         phase = np.fromfile(f, np.float32).reshape(height, width)
 
-        # [rad] * [m/rad] * [um/m] * z factor thing trust be bro
+    # [rad] * [m/rad] * [um/m]
     if unit == 1:  # 1 = rad, 2 = m
-        phase = phase * hconv * 1e5
+        phase = phase * hconv * 1e6
     return phase, pxSize_um  # [um (height)], [um/px (x and y)]
+
+
+def compare():
+    phaseK, pxSize = load_phase_file("./datas/10mmDiamKoala.bin")
+    profileK = np.nanmean(phaseK, axis=0)
+    profileCai = np.load("./stitches/2025-06-05T135030/profile.npy")
+
+    smothedCai = gaussian_filter(profileCai, sigma=5)
+    smothedK = gaussian_filter(profileK, sigma=5)
+
+    profileCai -= np.max(smothedCai)
+    profileK -= np.max(smothedK)
+
+    maxOfCai = np.argmax(smothedCai)
+    maxOfK = np.argmax(smothedK)
+
+    if maxOfCai > maxOfK:
+        maxOfCai = profileCai[maxOfCai - maxOfK :]
+    elif maxOfCai < maxOfK:
+        maxOfK = profileK[maxOfK - maxOfCai :]
+
+    fig, ax = plt.subplots(nrows=2, ncols=1)
+    ax[0].plot(profileK)
+    ax[0].plot(profileCai)
+    ax[0].legend(["Koala", "Cai"])
+    ax[1].plot(profileK - profileCai[: len(profileK)])
+    plt.savefig("./datas/10mmDiamKoalaVsCai.png")
+    # plt.show()
+
+
+if __name__ == "__main__":
+    compare()
 
 
 def fit_plane(phase, pxSize, returnCoefs=False):

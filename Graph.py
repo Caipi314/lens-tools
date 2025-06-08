@@ -7,14 +7,15 @@ from matplotlib import pyplot as plt
 from matplotlib.ticker import FuncFormatter
 import numpy as np
 
+from AreaMap import AreaMap
 import MaxContSearch
 from Traversal import Traversal
 
 
-class Scan:
-    def __init__(self, linkTrav: Traversal = None, show=True):
-        self.show = show
-        self.linkTrav = linkTrav
+class Graph:
+    def __init__(self, areaMap: AreaMap):
+        self.areaMap = areaMap
+
         self.texts = []
         self.contPoints = []  # contains (x, y, z contrast)
         self.maxContSearches = []
@@ -23,14 +24,9 @@ class Scan:
         self.setupGraph()
 
     def setupGraph(self):
-        if not self.show:
-            return
         plt.ion()
-        if self.linkTrav:
-            self.fig, axes = plt.subplots(2, 1, figsize=(10, 10))
-            self.ax, self.map = axes
-        else:
-            self.fig, self.ax = plt.subplots(figsize=(10, 6))
+        self.fig, axes = plt.subplots(2, 1, figsize=(10, 10))
+        self.ax, self.map = axes
 
         norm = plt.Normalize(vmin=0, vmax=10)
         self.contSc = self.ax.scatter(
@@ -65,13 +61,11 @@ class Scan:
         self.ax.set_xlabel("X-axis [mm]")
         self.ax.set_ylabel("Z-axis [mm]")
         self.ax.invert_yaxis()
-        self.ax.set_title("Scan")
+        self.ax.set_title("Graph")
         self.ax.grid(True)
         plt.tight_layout()
 
     def updateContPts(self):
-        if not self.show:
-            return
         x = [point["x"] for point in self.contPoints]
         z = [point["z"] for point in self.contPoints]
         cont = [point["cont"] for point in self.contPoints]
@@ -91,8 +85,6 @@ class Scan:
             self.texts.append(txt)
 
     def updateDirSearchPts(self):
-        if not self.show:
-            return
         startPts = []  # contains (x, z)
         contPts = []  # contains (x, z)
         contOfPts = []  # matches with contPts. contains contrasts
@@ -118,8 +110,6 @@ class Scan:
             self.texts.append(txt)
 
     def updateMaxContSearchPts(self):
-        if not self.show:
-            return
         endPts = []  # contains (x, z)
         contPts = []  # contains (x, z)
         contOfPts = []  # matches with contPts. contains contrasts
@@ -147,13 +137,31 @@ class Scan:
             )
             self.texts.append(txt)
 
-    def updateLinkTrav(self):
+    def updateAreaMap(self):
+        # for now just crudely stick them together
         self.map.clear()
-        step = math.ceil(math.prod(self.linkTrav.stitch.shape) / (800 * 800 * 5))
-        stitch_downsampled = self.linkTrav.stitch[::step, ::step]
+        stitches = [
+            row.stitch[: -AreaMap.yOverlap, :] - row.zDiff for row in self.areaMap.rows
+        ]
+
+        max_cols = max(arr.shape[1] for arr in stitches)
+
+        # Pad each array to match the max dimensions
+        padded_arrays = [
+            np.pad(arr, ((0, 0), (0, max_cols - arr.shape[1])), constant_values=np.nan)
+            for arr in stitches
+        ]
+
+        # Stack the padded arrays
+        stitch = np.vstack(padded_arrays)
+
+        step = math.ceil(math.prod(stitch.shape) / (800 * 800 * 5))
+        stitch = stitch[::step, ::step]
+
         self.map.imshow(
-            stitch_downsampled,
-            cmap="prism",  # 'jet'
+            stitch,
+            # cmap="prism",  # 'jet'
+            cmap="jet",
             rasterized=True,
             resample=False,
             interpolation="none",
@@ -165,9 +173,6 @@ class Scan:
         self.ax.autoscale_view()
 
     def updateGraph(self):
-        if not self.show:
-            return
-
         start_total = time.time()
 
         # remove old annotations
@@ -180,8 +185,7 @@ class Scan:
             self.updateDirSearchPts()
         if len(self.maxContSearches):
             self.updateMaxContSearchPts()
-        if self.linkTrav:
-            self.updateLinkTrav()
+        self.updateAreaMap()
 
         # Update view limits
         self.updateViewLimits()
@@ -202,17 +206,12 @@ class Scan:
 
     def logContrast(self, x, y, z, contrast):
         self.contPoints.append({"x": x, "y": y, "z": z, "cont": contrast})
-        if self.show:
-            self.updateGraph()
+        self.updateGraph()
 
     def startLogMaxContSearch(self, search: MaxContSearch):
-        if not self.show:
-            return
         self.maxContSearches.append(search)
 
     def logDirectionSearch(self, x, y, z_start, maxContDirection, contrasts):
-        if not self.show:
-            return
         # contrasts is a dict where key is z relative to z_start, and value is contrast
         points = [{"z": z_start + dz, "cont": cont} for dz, cont in contrasts.items()]
         self.directionSearches.append(
@@ -226,16 +225,16 @@ class Scan:
         )
         self.updateGraph()
 
+    def clear(self):
+        self.contPoints = []  # contains (x, y, z contrast)
+        self.maxContSearches = []
+        self.directionSearches = []
+        self.updateGraph()
+
     def saveToFiles(self):
-        if self.show:
-            plt.ioff()
+        plt.ioff()
 
-        if self.linkTrav:
-            if self.show:
-                plt.savefig(str(self.linkTrav.absFolderPath / "traversal.png"))
-                plt.close()
+        plt.savefig(str(self.areaMap.absFolderPath / "traversal.png"))
+        plt.close()
 
-            self.linkTrav.saveImages()
-        else:
-            plt.savefig("./datas/latestScan.png")
-            plt.close()
+        self.areaMap.saveImages()

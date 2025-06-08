@@ -1,3 +1,4 @@
+import asyncio
 import traceback
 from KoalaController import KoalaController
 from Scan import Scan
@@ -50,11 +51,6 @@ def testFocusing():
     1
 
 
-def mapProfile():
-    host.move_to(51333, 62041, 13570.4)
-    host.map2dProfile()
-
-
 try:
     KoalaGui.turnLive(False)
     host = KoalaController()
@@ -62,9 +58,15 @@ try:
 
     start = time.time()
     host.setLimit(h=8_000)
-    host.move_to(53045, 51043, 13615.6)
+    # host.move_to(58982, 56368, 13448)  # center
+    # host.move_to(53921, 51042, 13658.6)  # just before the crease thing
+    # host.move_to(58100.28, 51905, 13470.6)  # just before the crease thing
     # host.traverseToTop()
-    # host.map2dProfile()
+    # host.mapProfile(maxRadius=5_000)
+    # host.mapProfile(maxRadius=500)
+    host.mapArea(maxRadius=300)
+
+    # host.map2dProfile(radius=5_000)
 
     # center = host.traverseToTop()
     # end = host.traverseToEnd(step=1_000)

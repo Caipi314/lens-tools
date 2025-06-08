@@ -1,0 +1,34 @@
+{
+  "IDEAL_NOISE_CUTOFF": {
+    "name": "Noise Contrast Cutoff",
+    "type": "float",
+    "value": 2.2,
+    "stagedVal": null,
+    "defaultValue": 2.2,
+    "description": "Contrast values under this value will be considered as noise."
+  },
+  "ABS_MAX_Z": {
+    "name": "Maximum Safe Z",
+    "type": "int",
+    "value": 27175,
+    "stagedVal": null,
+    "defaultValue": 27175,
+    "description": "The maximum value of Z (read by the joystick in um), so that the 20x lens doesn't hit the stage. MUST RECALIBRATE IF THE CRANK IS TURNED"
+  },
+  "FIND_DIR_DIST": {
+    "name": "Find Direction Step Size",
+    "type": "int",
+    "value": 25,
+    "stagedVal": null,
+    "defaultValue": 25,
+    "description": "The small distance in um to go up and down to see if the contrast increases."
+  },
+  "FAST_MOVE_REL_TIME": {
+    "name": "Fast Relative Move Wait Time",
+    "type": "float",
+    "value": 0.4,
+    "stagedVal": null,
+    "defaultValue": 0.4,
+    "description": "Time to wait for a fast (small) relative move in seconds. No reason to go over 0.6."
+  }
+}

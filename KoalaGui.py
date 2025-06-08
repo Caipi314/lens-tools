@@ -34,3 +34,7 @@ def turnLive(on):
     if on and not is_live or not on and is_live:
         gui.click(x=x, y=y)
     gui.moveTo(x_init, y_init)
+
+
+if __name__ == "__main__":
+    launchKoala()

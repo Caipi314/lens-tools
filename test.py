@@ -1,19 +1,17 @@
+import json
 import matplotlib.pyplot as plt
 import numpy as np
 import time
 
-plt.ion()  # Turn on interactive mode
-fig, ax = plt.subplots()
-x = np.linspace(0, 10, 100)
-y = np.sin(x)
-(line,) = ax.plot(x, y)
+with open("./stitches/2025-06-03T174101/info.json", "r") as f:
+    loaded_data = json.load(f)
+    folder = loaded_data["folderPath"]
+    stitch = np.load(folder + "/profile.npy")
+    print(stitch.shape)
+    print(stitch)
+    plt.figure()
+    plt.plot(stitch)
 
-for i in range(100):
-    y = np.sin(x + i * 0.1)
-    line.set_ydata(y)
-    fig.canvas.draw()
-    fig.canvas.flush_events()
-    time.sleep(0.1)
-
-plt.ioff()  # Turn off interactive mode
-plt.show()
+    # plt.imshow(stitch, cmap="jet")
+    plt.show()
+    # plt.imsave(stitch, folder + "/stitch.png")
