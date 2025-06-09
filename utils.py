@@ -63,7 +63,7 @@ def save2(pic, cmap="jet"):
 
 
 def ptToPtStitch(pic1, pt1, pic2, pt2=np.array((0, 0))):
-    """Stitch pic2 onto pic1 so that pic2[pt2] lands at pic1[pt1], averaging any overlap."""
+    """Stitch pic2 onto pic1 so that pic2[pt2] lands at pic1[pt1], averaging any overlap, persisting Nans."""
     y, x = pt1 - pt2
 
     h1, w1 = pic1.shape
@@ -79,8 +79,10 @@ def ptToPtStitch(pic1, pt1, pic2, pt2=np.array((0, 0))):
     out_w = right - left
 
     # create accumulators
-    acc = np.full((out_h, out_w), np.nan)
-    weight = np.zeros_like(acc)
+    pic1Canvas = np.zeros((out_h, out_w))
+    pic2Canvas = np.zeros((out_h, out_w))
+    pic1Weight = np.zeros((out_h, out_w))
+    pic2Weight = np.zeros((out_h, out_w))
 
     # paste pic1
     r1 = -top
@@ -88,8 +90,8 @@ def ptToPtStitch(pic1, pt1, pic2, pt2=np.array((0, 0))):
     p1Rows = slice(r1, r1 + h1)
     p1Cols = slice(c1, c1 + w1)
     p1NonNan = ~np.isnan(pic1)
-    acc[p1Rows, p1Cols] = pic1
-    weight[p1Rows, p1Cols][p1NonNan] += 1
+    pic1Canvas[p1Rows, p1Cols][p1NonNan] = pic1[p1NonNan]
+    pic1Weight[p1Rows, p1Cols][p1NonNan] = 1
 
     # paste pic2
     r2 = y - top
@@ -97,12 +99,35 @@ def ptToPtStitch(pic1, pt1, pic2, pt2=np.array((0, 0))):
     p2Rows = slice(r2, r2 + h2)
     p2Cols = slice(c2, c2 + w2)
     p2NonNan = ~np.isnan(pic2)
-    acc[p2Rows, p2Cols][p2NonNan] = np.nan_to_num(acc[p2Rows, p2Cols][p2NonNan], nan=0)
-    acc[p2Rows, p2Cols][p2NonNan] += pic2[p2NonNan]
-    weight[p2Rows, p2Cols][p2NonNan] += 1
+    pic2Canvas[p2Rows, p2Cols][p2NonNan] = pic2[p2NonNan]
+    pic2Weight[p2Rows, p2Cols][p2NonNan] = 1
 
-    # average where any image contributed
-    acc[weight == 2] /= 2
-    print("mean of weight == 2", np.mean(acc[weight == 2]))
+    # * Alpha-blend the overlap
+    try:
+        # Get the bounds of the overlap
+        rows, cols = np.argwhere(pic1Weight + pic2Weight == 2).T
+        yMin, xMin = rows.min(), cols.min()  # Top-left corner
+        yMax, xMax = rows.max() + 1, cols.max() + 1  # Bottom-right corner
+        overlapH = yMax - yMin
+        overlapW = xMax - xMin
 
+        dy, dx = r2 - r1, c2 - c1
+        if abs(dx) > abs(dy):  # x stitch
+            start, end = (1, 0) if dx > 0 else (0, 1)
+            x = np.linspace(start, end, overlapW)
+            X = np.tile(x, (overlapH, 1))
+            pic1Weight[yMin:yMax, xMin:xMax] = X
+            pic2Weight[yMin:yMax, xMin:xMax] = 1 - X
+        else:  # y stitch
+            start, end = (1, 0) if dy < 0 else (0, 1)
+            y = np.linspace(start, end, overlapH)
+            Y = np.tile(y[:, np.newaxis], (1, overlapW))
+            pic1Weight[yMin:yMax, xMin:xMax] = Y
+            pic2Weight[yMin:yMax, xMin:xMax] = 1 - Y
+    except ValueError:
+        print("could not complete alpha-blending because no overlap")
+
+    acc = pic1Canvas * pic1Weight + pic2Canvas * pic2Weight
+    #! Very important that Nans persist. Lest they become part of the "valid square"
+    acc[(pic1Weight == 0) & (pic2Weight == 0)] = np.nan
     return acc, np.array((r1, c1)), np.array((r2, c2))
