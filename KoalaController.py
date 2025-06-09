@@ -36,7 +36,9 @@ class InvalidMove(Exception):
     """Invalid move"""
 
     def __init__(self, z):
-        super().__init__(f"Tried to move to not allowed z={z}")
+        msg = f"Tried to move to not allowed z={z}"
+        print(msg)
+        super().__init__(msg)
 
 
 class KoalaController:
@@ -277,7 +279,10 @@ class KoalaController:
         contrasts = {}  # kv pairs of dz: contrast
         dist = self.settings.get("FIND_DIR_DIST")
         for dz in [-dist, dist, 0]:
-            self.move_to(z=startZ + dz, fast=True)
+            try:
+                self.move_to(z=startZ + dz, fast=True)
+            except InvalidMove:
+                raise FocusNotFound()
             contrast = self.getContrast(avg=dist // 5 + 1)  # fast huristic for avg
             contrasts[dz] = contrast
 
@@ -286,10 +291,8 @@ class KoalaController:
             raise FocusNotFound()
         maximisingDir = np.sign(maxDz)
 
-        try:
-            self.move_to(z=startZ - maxDz, fast=True)  # assumes only 2 opposite points
-        except InvalidMove:
-            raise FocusNotFound()
+        # move to the side of lowest contrast to approach the side of highest contrast
+        self.move_to(z=startZ - maxDz, fast=True)  # assumes only 2 opposite points
 
         self.scan.logDirectionSearch(x, y, startZ, maximisingDir, contrasts)
 
@@ -365,7 +368,6 @@ class KoalaController:
         a, b, c = utils.fit_plane(phase, pxSize)
         dh = a * dx + b * dy
 
-        print(f"For dx={int(dx)}, added dz={int(dh)}")
         self.move_rel(dx, dy, -dh, fast=fast)
         # -dh because the phase picture is calculating heights, and higher things mean lower z
         return -dh
@@ -430,31 +432,31 @@ class KoalaController:
             else:
                 raise Exception("Could not find a valid stitch")  # not caught
             picTime = time.time() - t0
-            print(f"Pic time: {picTime:.3f}s")
+            print(f"Total Pic time: {picTime:.3f}s")
 
     def mapProfile(self, maxRadius=None):
         # self.scan = Scan(show=True)
         # startCont, center = self.traverseToTop()
         # self.scan.saveToFiles()
         # TODO replace with above after testing
-        self.move_to(50459, 52864, 12267.2)
+        self.move_to(59863.48, 48867.56, 1360.2)
         center = self.getPos()
 
-        phase, pxSize = self.phaseAvg_um(avg=5)
+        phase, pxSize = self.phaseAvg_um(avg=1)
         areaMap = AreaMap(True, phase.shape, pxSize, maxRadius)
         self.scan = Graph(areaMap=areaMap)
         row = areaMap.nextRow()
         row.initCenter(phase, pxSize, center, None, 0)
         self.mapRow(row)
 
-        self.scan.saveToFiles()
+        self.scan.saveToFiles(show=False)
 
     def mapArea(self, maxRadius=None):
         # self.scan = Scan(show=True)
         # startCont, center = self.traverseToTop()
         # self.scan.saveToFiles()
         # TODO replace with above after testing
-        self.move_to(50459, 52864, 12267.2)
+        self.move_to(59863.48, 48867.56, 1360.2)
         center = self.getPos()
 
         phase, pxSize = self.phaseAvg_um(avg=1)
@@ -490,8 +492,9 @@ class KoalaController:
                 try:
                     phase, _ = self.phaseAvg_um(avg=i // 100)
                     shift, zDiff = areaMap.getShift(row.centerPic, phase)
+                    curZDiff = row.zDiff
                     row = areaMap.nextRow()
-                    row.initCenter(phase, pxSize, pos, shift, zDiff)
+                    row.initCenter(phase, pxSize, pos, shift, curZDiff + zDiff)
                     break
                 except BadFit:
                     ...

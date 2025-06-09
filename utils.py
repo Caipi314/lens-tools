@@ -2,7 +2,6 @@ import numpy as np
 import pathlib
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
-from scipy.ndimage import gaussian_filter
 import struct
 
 
@@ -39,14 +38,32 @@ def getZDiff(shift, f1Area, f2Area):
     elif dy < 0:
         ySlice1, ySlice2 = slice(None, dy), slice(-dy, None)
 
-    zDiff = np.mean(f1Area[ySlice1, xSlice1] - f2Area[ySlice2, xSlice2])
+    a1 = f1Area[ySlice1, xSlice1]
+    a2 = f2Area[ySlice2, xSlice2]
+
+    trim_percent = 40
+    diff = a1 - a2
+    lower = np.percentile(diff, trim_percent)
+    upper = np.percentile(diff, 100 - trim_percent)
+    trimmed = diff[(diff >= lower) & (diff <= upper)]
+    zDiff = np.mean(trimmed)
 
     print(f"Stitch has dx={dx}, dy={dy}, zDiff={zDiff:.2f}")
     return zDiff
 
 
+def save1(pic, cmap="jet"):
+    pic = np.nan_to_num(pic, nan=0.5)
+    plt.imsave("./datas/pic1.png", pic, cmap=cmap)
+
+
+def save2(pic, cmap="jet"):
+    pic = np.nan_to_num(pic, nan=0.5)
+    plt.imsave("./datas/pic2.png", pic, cmap=cmap)
+
+
 def ptToPtStitch(pic1, pt1, pic2, pt2=np.array((0, 0))):
-    """Returns a new array that has pic2's pt2 at pt1 on pic1 with overlap averaged"""
+    """Stitch pic2 onto pic1 so that pic2[pt2] lands at pic1[pt1], averaging any overlap."""
     y, x = pt1 - pt2
 
     h1, w1 = pic1.shape
@@ -55,36 +72,37 @@ def ptToPtStitch(pic1, pt1, pic2, pt2=np.array((0, 0))):
     # output dimensions
     top = min(0, y)
     left = min(0, x)
-    bottom = max(h1, y + h2)
-    right = max(w1, x + w2)
+    bottom = max(h1, h2 + y)
+    right = max(w1, w2 + x)
 
     out_h = bottom - top
     out_w = right - left
 
     # create accumulators
-    acc = np.zeros((out_h, out_w), dtype=np.float64)
+    acc = np.full((out_h, out_w), np.nan)
     weight = np.zeros_like(acc)
-    print(f"new size {acc.shape}")
 
     # paste pic1
     r1 = -top
     c1 = -left
     p1Rows = slice(r1, r1 + h1)
     p1Cols = slice(c1, c1 + w1)
-    acc[p1Rows, p1Cols] += pic1
-    weight[p1Rows, p1Cols] += 1
+    p1NonNan = ~np.isnan(pic1)
+    acc[p1Rows, p1Cols] = pic1
+    weight[p1Rows, p1Cols][p1NonNan] += 1
 
     # paste pic2
     r2 = y - top
     c2 = x - left
     p2Rows = slice(r2, r2 + h2)
     p2Cols = slice(c2, c2 + w2)
-    acc[p2Rows, p2Cols] = np.nan_to_num(acc[p2Rows, p2Cols], nan=0)
-    acc[p2Rows, p2Cols] += pic2
-    weight[p2Rows, p2Cols] += 1
+    p2NonNan = ~np.isnan(pic2)
+    acc[p2Rows, p2Cols][p2NonNan] = np.nan_to_num(acc[p2Rows, p2Cols][p2NonNan], nan=0)
+    acc[p2Rows, p2Cols][p2NonNan] += pic2[p2NonNan]
+    weight[p2Rows, p2Cols][p2NonNan] += 1
 
     # average where any image contributed
-    acc[weight > 1] /= weight[weight > 1]
-    acc[weight == 0] = np.nan
+    acc[weight == 2] /= 2
+    print("mean of weight == 2", np.mean(acc[weight == 2]))
 
     return acc, np.array((r1, c1)), np.array((r2, c2))

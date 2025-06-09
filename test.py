@@ -1,4 +1,6 @@
 import json
+from scipy.ndimage import gaussian_filter
+import pathlib
 import matplotlib.pyplot as plt
 import numpy as np
 import time
@@ -17,10 +19,7 @@ def plot3D(phase, pxSize, plane):
     ax = fig.add_subplot(111, projection="3d")
 
     # Plot height data
-    ax.plot_surface(X, Y, phase, cmap="viridis", alpha=0.7)
-
-    # Plot plane
-    ax.plot_surface(X, Y, plane_Z, color="red", alpha=0.3)
+    ax.plot_surface(X, Y, phase, cmap="jet", alpha=0.7)
 
     # Labels
     ax.set_xlabel("X")

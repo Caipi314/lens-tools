@@ -26,6 +26,8 @@ class Graph:
     def setupGraph(self):
         plt.ion()
         self.fig, axes = plt.subplots(2, 1, figsize=(10, 10))
+        self.fig.canvas.manager.window.geometry("+800+0")
+
         self.ax, self.map = axes
 
         norm = plt.Normalize(vmin=0, vmax=10)
@@ -50,8 +52,20 @@ class Graph:
             [], [], c=[], norm=norm, cmap="jet", marker=".", s=50
         )
 
-        self.cbar = self.fig.colorbar(self.contSc, ax=self.ax)
-        self.cbar.set_label("Contrast")
+        cbar = self.fig.colorbar(self.contSc, ax=self.ax)
+        cbar.set_label("Contrast")
+
+        self.im = self.map.imshow(
+            np.array(((0, 0), (0, 0))),
+            # cmap="prism",  # 'jet'
+            cmap="jet",
+            rasterized=True,
+            resample=False,
+            interpolation="none",
+        )
+        self.map.set_aspect("equal")
+        self.imcbar = self.fig.colorbar(self.im)
+        self.imcbar.set_label("Height [um]")
 
         to_mm = FuncFormatter(lambda x, pos: f"{x/1000:.2f}")
         self.ax.xaxis.set_major_formatter(to_mm)
@@ -138,39 +152,40 @@ class Graph:
             self.texts.append(txt)
 
     def updateAreaMap(self):
-        # for now just crudely stick them together
-        self.map.clear()
-        # stitches = [
-        #     row.stitch[: -AreaMap.yOverlap, :] - row.zDiff for row in self.areaMap.rows
-        # ]
+        def getStitchPreview():
+            if self.areaMap.stitch is None:
+                return self.areaMap.rows[-1].stitch
+            if self.areaMap.rows[-1].done:
+                return self.areaMap.stitch
 
-        # max_cols = max(arr.shape[1] for arr in stitches)
+            stitch = self.areaMap.stitch
+            lastRow = self.areaMap.rows[-1].stitch + self.areaMap.rows[-1].zDiff
 
-        # # Pad each array to match the max dimensions
-        # padded_arrays = [
-        #     np.pad(arr, ((0, 0), (0, max_cols - arr.shape[1])), constant_values=np.nan)
-        #     for arr in stitches
-        # ]
+            if lastRow.shape[1] >= stitch.shape[1]:
+                lastRow = lastRow[:, : stitch.shape[1]]
+            else:
+                lastRow = np.pad(
+                    lastRow,
+                    ((0, 0), (0, stitch.shape[1] - lastRow.shape[1])),
+                    mode="constant",
+                    constant_values=np.nan,
+                )
+            if self.areaMap.moveDir == -1:  # stitch up
+                return np.vstack((lastRow, stitch))
+            else:
+                return np.vstack((stitch, lastRow))
 
-        # # Stack the padded arrays
-        # stitch = np.vstack(padded_arrays)
-        stitch = (
-            self.areaMap.stitch
-            if self.areaMap.stitch is not None
-            else self.areaMap.rows[-1].stitch
-        )
+        t0 = time.time()
+        stitch = getStitchPreview()
 
-        step = math.ceil(math.prod(stitch.shape) / (800 * 800 * 5))
-        stitch = stitch[::step, ::step]
+        self.im.set_data(stitch)
+        self.map.set_aspect("auto")
+        self.im.set_clim(vmin=np.nanmin(stitch), vmax=np.nanmax(stitch))
+        self.imcbar.update_normal(self.im)
+        self.imcbar.set_label("Height [um]")
 
-        self.map.imshow(
-            stitch,
-            # cmap="prism",  # 'jet'
-            cmap="jet",
-            rasterized=True,
-            resample=False,
-            interpolation="none",
-        )
+        getP = time.time() - t0
+        print(f"Get preview: {getP:.2f}s")
 
     def updateViewLimits(self):
         for plot in [self.contSc, self.dirSearchSc2, self.maxContSearchSc2]:
@@ -178,8 +193,6 @@ class Graph:
         self.ax.autoscale_view()
 
     def updateGraph(self):
-        start_total = time.time()
-
         # remove old annotations
         [txt.remove() for txt in self.texts]
         self.texts.clear()

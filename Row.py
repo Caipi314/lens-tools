@@ -8,7 +8,7 @@ import utils
 
 
 class Row:
-    xOverlap = 25
+    xOverlap = 25 * 5
     overlapVec = np.array((0, xOverlap))
     acceptableDy = 20
 
@@ -43,8 +43,6 @@ class Row:
             self.moveDir = -1
             print(f"X Edge is at {self.edge}")
         else:
-            #! Should be replacing Nan based on closes valid pixrel
-            self.stitch = np.nan_to_num(self.stitch, nan=0)
             self.done = True
 
     def stitchRight(self, pic, shift):
@@ -68,7 +66,7 @@ class Row:
         self.stitch, stitchShift, picShift = utils.ptToPtStitch(
             self.stitch, stitchPt, pic, picPt
         )
-        self.leftPt = (0, 0) + picShift
+        self.leftPt = picShift
         self.centerPt += stitchShift
         self.rightPt += stitchShift
 

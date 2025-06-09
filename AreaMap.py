@@ -12,7 +12,7 @@ import utils
 
 
 class AreaMap:
-    yOverlap = 25  # ? Could do the max number of nans on the pic below it
+    yOverlap = 25 * 5  # ? Could do the max number of nans on the pic below it
     overlapVec = np.array((yOverlap, 0))
     acceptableDx = 15
 
@@ -20,7 +20,6 @@ class AreaMap:
     baseFolder = "./stitches/"
 
     def __init__(self, isProfile, picShape, pxSize, maxRadius=None):
-        # picShape and pxSize are only used if isProfile is False
         self.isProfile = isProfile
         self.maxRadius = maxRadius
         self.picShape = picShape  # (height, width)
@@ -40,14 +39,11 @@ class AreaMap:
 
     def nextRow(self):
         # TODO fancier logic than just constant maxRadius for all
-        row = Row(maxRadius=self.maxRadius)
+        row = Row(maxRadius=250)
         if len(self.rows) == 0:
             self.centerRow = row
 
-        if self.moveDir == -1:
-            self.rows.insert(0, row)
-        else:
-            self.rows.append(row)
+        self.rows.append(row)
         return row
 
     def prematureEdge(self, y):
@@ -63,28 +59,24 @@ class AreaMap:
             self.moveDir = 1
             print(f"Y Edge is at {self.edge}")
         else:
-            # TODO Stitch together the rows
-            # self.stitch = np.nan_to_num(self.stitch, nan=0)
             self.done = True
 
-    def getShift(self, lastPic, currentPic):
+    def getShift(self, lastPic, currPic):
         """takes 2 pictures. One is the last row's center pic, and a the other is the pic of the current row's center, and gets the shift to stitch pic2 ON TOP of pic1."""
-        # if currentPic.
-        stitchUp = self.moveDir == -1
-        if stitchUp == -1:
-            pic1, pic2 = lastPic, currentPic
-        else:
-            pic1, pic2 = currentPic, lastPic
-        f1Area = pic1[: AreaMap.yOverlap, :]
-        f2Area = pic2[-AreaMap.yOverlap :, :]
+        if self.moveDir == -1:  # stitch up
+            lastArea = lastPic[: AreaMap.yOverlap, :]
+            currArea = currPic[-AreaMap.yOverlap :, :]
+        else:  # stitch down
+            lastArea = lastPic[-AreaMap.yOverlap :, :]
+            currArea = currPic[: AreaMap.yOverlap, :]
 
-        shift = phase_cross_correlation(f1Area, f2Area)[0].astype(int)
+        shift = phase_cross_correlation(lastArea, currArea)[0].astype(int)
 
         if abs(shift[1]) > AreaMap.acceptableDx:
             print(f"Fit not acceptable (dx={shift[1]}), trying again")
             raise BadFit
 
-        zDiff = utils.getZDiff(shift, f1Area, f2Area)
+        zDiff = utils.getZDiff(shift, lastArea, currArea)
         return shift, zDiff
 
     def stitchUp(self, row: Row):
@@ -95,19 +87,19 @@ class AreaMap:
         self.stitch, stitchShift, picShift = utils.ptToPtStitch(
             self.stitch, stitchPt, row.stitch, rowPt
         )
-        self.topPt += stitchShift
+        self.topPt = picShift + row.centerPt
         self.botPt += stitchShift
 
     def stitchDown(self, row: Row):
-        row.stitch -= row.zDiff
+        row.stitch += row.zDiff
 
         stitchPt = self.botPt + (self.picShape[0], 0) - AreaMap.overlapVec + row.shift
         rowPt = row.centerPt
         self.stitch, stitchShift, picShift = utils.ptToPtStitch(
             self.stitch, stitchPt, row.stitch, rowPt
         )
+        self.botPt = picShift + row.centerPt
         self.topPt += stitchShift
-        self.botPt += stitchShift
 
     def addToStitch(self, row):
         stitchUp = self.moveDir == -1
@@ -127,7 +119,8 @@ class AreaMap:
         # TODO what if isProfile = False
 
         stitch = self.stitch if self.stitch is not None else self.centerRow.stitch
-        profile = np.nanmean(self.centerRow.stitch, axis=0)
+        profile = self.centerRow.stitch[300, :]
+        # profile = np.nanmean(self.centerRow.stitch, axis=0)
 
         np.save(str(self.absFolderPath / "stitch.npy"), stitch)
         np.save(str(self.absFolderPath / "profile.npy"), profile)
@@ -145,6 +138,7 @@ class AreaMap:
                     "folderPath": str(self.absFolderPath),
                     "isProfile": self.isProfile,
                     "numRows": len(self.rows),
+                    "pxSize": self.pxSize,
                     "stitchFile": "stitch.npy",
                     "profileFile": "profile.npy",
                     "instructions": 'To recover full 2d stitch, use `stitch = np.load("./stitch.npy")`. To recover 1d profile, use `stitch = np.load("./profile.npy")`. To load this dictionary as kv pairs use `with open("info.json", "r") as f: data = json.load(f)`',

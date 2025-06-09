@@ -54,18 +54,18 @@ def testFocusing():
 try:
     KoalaGui.turnLive(False)
     host = KoalaController()
-    # host.setup()
+    host.setup()
 
     start = time.time()
-    host.setLimit(h=8_000)
+    host.setLimit(h=20_000)
     # host.move_to(58982, 56368, 13448)  # center
     # host.move_to(53921, 51042, 13658.6)  # just before the crease thing
     # host.move_to(58100.28, 51905, 13470.6)  # just before the crease thing
     # host.traverseToTop()
     # host.mapProfile(maxRadius=5_000)
-    host.mapProfile(maxRadius=500)
+    # host.mapProfile(maxRadius=500)
     # host.mapArea(maxRadius=300)
-    # host.mapArea(maxRadius=1_000)
+    host.mapArea(maxRadius=500)
 
     # host.map2dProfile(radius=5_000)
 
