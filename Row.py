@@ -14,7 +14,8 @@ class Row:
     overlapVec = np.array((0, xOverlap))
     acceptableDy = 20
 
-    def __init__(self, maxRadius=None, totalCenter=None):
+    def __init__(self, circle, maxRadius=None, totalCenter=None):
+        self.circle = circle
         self.maxRadius = maxRadius
         self.totalCenter = totalCenter
         self.halfWidth = None
@@ -33,7 +34,7 @@ class Row:
             np.sqrt(
                 self.maxRadius**2 - np.square(self.centerPos[1] - self.totalCenter[1])
             )
-            if self.totalCenter is not None
+            if self.circle and self.totalCenter is not None
             else self.maxRadius
         )
         self.stitch = centerPic

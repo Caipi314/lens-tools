@@ -1,9 +1,31 @@
 from io import BytesIO
 import time
+import traceback
 import dearpygui.dearpygui as dpg
 from PIL import Image
 
 from GlobalSettings import GlobalSettings
+
+from KoalaController import KoalaController
+import KoalaGui
+
+
+def startFunc(height, func):
+    try:
+        KoalaGui.turnLive(False)
+        host = KoalaController()
+        host.setup()
+
+        start = time.time()
+        host.setLimit(h=height)
+        func(host)
+        end = time.time()
+        print(f"Time: {end - start:.3f} seconds")
+    except Exception as err:
+        traceback.print_exc()
+    finally:
+        KoalaGui.turnLive(True)
+        host.logout()
 
 
 dpg.create_context()
@@ -37,37 +59,29 @@ with dpg.texture_registry():
         dpg.add_static_texture(width, height, image_data, tag=icon)
 
 
-def on_settingsBtn_click():
-    print("Settings clicked")
+# def on_findFocusBtn_click():
+#     dpg.configure_item("GoModal", show=True)
+#     print("Find focus btn clicked")
 
 
-def on_findFocusBtn_click():
-    dpg.configure_item("HeightModal", show=True)
-    print("Find focus btn clicked")
+# def on_findCenterBtn_click():
+#     dpg.configure_item("GoModal", show=True)
+#     print("Find center btn clicked")
 
 
-def on_findCenterBtn_click():
-    dpg.configure_item("HeightModal", show=True)
-    print("Find center btn clicked")
+# def on_2dProfileBtn_click():
+#     dpg.configure_item("GoModal", show=True)
+#     print("Map Diameter btn clicked")
 
 
-def on_2dProfileBtn_click():
-    dpg.configure_item("HeightModal", show=True)
-    print("Map Diameter btn clicked")
-
-
-def on_3dMapBtn_click():
-    dpg.configure_item("HeightModal", show=True)
-    print("Map Surface btn clicked")
+# def on_3dMapBtn_click():
+#     dpg.configure_item("GoModal", show=True)
+#     print("Map Surface btn clicked")
 
 
 def on_stopBtn_click():
     #! Do something
     print("STOP button clicked")
-
-
-def on_go_click():
-    print("go clicked")
 
 
 #! Styling
@@ -125,6 +139,10 @@ with dpg.theme() as goBtn:
     with dpg.theme_component(dpg.mvButton):
         dpg.add_theme_color(dpg.mvThemeCol_Button, (77, 214, 91, 255))
         dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered, (116, 252, 130, 30))
+
+with dpg.theme() as red_theme:
+    with dpg.theme_component(dpg.mvInputInt):
+        dpg.add_theme_color(dpg.mvThemeCol_FrameBg, (255, 0, 0, 255))  # Red background
 
 
 def bigBtn(func, text, icon, width, height, imgMargin=0):
@@ -193,6 +211,14 @@ def showSettingsModal():
     dpg.configure_item("SettingsModal", show=True)
 
 
+def showGoModal(funcID):
+    settings.setFuncID(funcID)
+    dpg.configure_item("GoModal", show=True)
+    dpg.configure_item("shape", show=funcID in [4])
+    dpg.configure_item("radius", show=funcID in [3, 4])
+    dpg.configure_item("curvature", show=funcID in [2, 3, 4])
+
+
 with dpg.window(tag="MainWindow", no_resize=True, no_move=True):
     # ? Title Area
     with dpg.group(horizontal=True):
@@ -259,7 +285,7 @@ with dpg.window(tag="MainWindow", no_resize=True, no_move=True):
     # ? Buttons
     with dpg.group(horizontal=True):
         bigBtn(
-            on_findFocusBtn_click,
+            lambda: showGoModal(1),
             "Find Focus",
             "findFocus",
             width=600,
@@ -267,7 +293,7 @@ with dpg.window(tag="MainWindow", no_resize=True, no_move=True):
             imgMargin=100,
         )
         bigBtn(
-            on_findCenterBtn_click,
+            lambda: showGoModal(2),
             "Find Top",
             "findCenter",
             width=550,
@@ -277,9 +303,9 @@ with dpg.window(tag="MainWindow", no_resize=True, no_move=True):
     dpg.add_spacer(height=10)
     with dpg.group(horizontal=True):
         bigBtn(
-            on_2dProfileBtn_click, "Map Diameter", "2dProfile", width=600, height=120
+            lambda: showGoModal(3), "Map Diameter", "2dProfile", width=600, height=120
         )
-        bigBtn(on_3dMapBtn_click, "Map Surface", "3dMap", width=550, height=120)
+        bigBtn(lambda: showGoModal(4), "Map Surface", "3dMap", width=550, height=120)
 
     dpg.add_spacer(height=10)
     dpg.add_separator()
@@ -292,39 +318,94 @@ with dpg.window(tag="MainWindow", no_resize=True, no_move=True):
 
 
 with dpg.window(
-    tag="HeightModal",
+    tag="GoModal",
     modal=True,
     show=False,
     no_title_bar=True,
     no_move=True,
+    no_resize=True,
     width=500,
-    height=230,
+    height=500,
     pos=(350, 120),
 ):
 
     def onGo():
-        input = dpg.get_value("height_input")
-        if int(input) < 100:
-            # or log
-            print("Please enter in µm. (Must be greater than 100µm)")
-        # close the modal
-        dpg.configure_item("HeightModal", show=False)
-        # start the function
-        ...
+        curvatureMap = {
+            "Traverse to Top": 1,
+            "Traverse to Bottom": -1,
+            "Start at current Position": 0,
+        }
+        heightInput = int(dpg.get_value("height_input"))
+        radiusInput = float(dpg.get_value("radius_input"))
+        curvatureInput = dpg.get_value("curvature_input")
+        shapeInput = dpg.get_value("shape_input")
+        checkbox = dpg.get_value("checkbox")
 
-    dpg.add_text("Enter Specimen Height in µm:")
+        curvature = curvatureMap[curvatureInput]
+        height = heightInput * 1000  # mm to um
+        radius = radiusInput * 1000  # mm to um
+        circle = shapeInput == "Stitch Circle"
+
+        if not checkbox:
+            return print("x20 lens must be positioned")
+        if height > 100:
+            return print("Please enter in mm")
+        if settings.funcID == 2 and curvature == 0:
+            return print("Please select traverse to bottom or top")
+
+        funcMap = {
+            1: lambda k: k.maximizeFocus(),
+            2: lambda k: k.traverseToExtreme(curvature),
+            3: lambda k: k.mapProfile(curvature, radius),
+            4: lambda k: k.mapArea(curvature, circle, radius),
+        }
+        # close the modal
+        dpg.configure_item("GoModal", show=False)
+        startFunc(height, funcMap[settings.funcID])
+
+    dpg.add_text("Enter Specimen Height in mm:")
     text = dpg.add_text("(So the microscope doesn't hit it)")
     dpg.bind_item_font(text, smallFont)
-    dpg.add_spacer(height=30)
+    dpg.add_spacer(height=10)
 
     with dpg.group(horizontal=True):
         dpg.add_spacer(width=130)
-        dpg.add_input_int(label="", tag="height_input", width=200, default_value=1000)
+        dpg.add_input_int(label="", tag="height_input", width=200, default_value=1)
+        dpg.bind_item_theme("height_input", red_theme)
     dpg.add_spacer(height=18)
+
+    with dpg.group(tag="radius", horizontal=True):
+        dpg.add_text("Radius [mm]")
+        dpg.add_spacer(width=20)
+        dpg.add_input_float(label="", tag="radius_input", width=200, default_value=1)
+    dpg.add_spacer(height=10)
+
+    with dpg.group(tag="shape", horizontal=True):
+        shapeField = dpg.add_combo(
+            ["Stitch Circle", "Stitch Square"],
+            tag="shape_input",
+            width=400,
+        )
+        dpg.set_value(shapeField, "Stitch Circle")
+    dpg.add_spacer(height=10)
+
+    with dpg.group(tag="curvature", horizontal=True):
+        curvatureField = dpg.add_combo(
+            ["Traverse to Top", "Traverse to Bottom", "Start at current Position"],
+            tag="curvature_input",
+            width=400,
+        )
+        dpg.set_value(curvatureField, "Traverse to Top")
+    dpg.add_spacer(height=10)
+
+    with dpg.group(horizontal=True):
+        dpg.add_checkbox(tag="checkbox", label="   x20 Lens is in position")
+    dpg.add_spacer(height=18)
+
     with dpg.group(horizontal=True):
         dpg.add_button(
             label="Cancel",
-            callback=lambda: dpg.configure_item("HeightModal", show=False),
+            callback=lambda: dpg.configure_item("GoModal", show=False),
         )
         dpg.add_spacer(width=280)
         dpg.add_button(label="Start", callback=onGo, tag="goBtn")
@@ -334,14 +415,13 @@ with dpg.window(
 with dpg.window(
     tag="SettingsModal",
     modal=True,
-    show=True,
     no_resize=True,
-    # show=False, # TODO uncomment
+    show=False,
     no_title_bar=True,
     no_move=True,
-    width=650,
-    height=500,
-    pos=(300, 120),
+    width=700,
+    height=600,
+    pos=(300, 30),
 ):
 
     def settingRow(settingKey):
@@ -349,7 +429,6 @@ with dpg.window(
         type = settings[settingKey]["type"]
         initialValue = settings[settingKey]["value"]
         description = settings[settingKey]["description"]
-        print(initialValue)
 
         def onChange(_sender, value):
             settings.stageValue(settingKey, value)

@@ -24,9 +24,10 @@ class AreaMap:
     basePath = Path.cwd()
     baseFolder = "./stitches/"
 
-    def __init__(self, isProfile, picShape, pxSize, maxRadius=None, curvature=0):
+    def __init__(self, isProfile, picShape, pxSize, maxRadius, curvature, circle):
         self.isProfile = isProfile
         self.curvature = curvature
+        self.circle = circle
         self.maxRadius = maxRadius
         self.picShape = picShape  # (height, width)
         self.pxSize = pxSize
@@ -47,7 +48,7 @@ class AreaMap:
 
     def nextRow(self):
         totalCenter = getattr(self.centerRow, "centerPos", None)  # could be none
-        row = Row(maxRadius=self.maxRadius, totalCenter=totalCenter)
+        row = Row(self.circle, maxRadius=self.maxRadius, totalCenter=totalCenter)
         if self.centerRow is None:
             self.centerRow = row
 

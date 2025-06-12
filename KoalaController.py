@@ -460,7 +460,7 @@ class KoalaController:
         areaMap.saveImages()
         self.scan.saveToFiles(show=False)
 
-    def mapArea(self, curvature, maxRadius=None):
+    def mapArea(self, curvature, circle, maxRadius=None):
         """Curvature=1, traverse to top, =-1 to bottom, =0 dont traverse at all"""
         if curvature != 0:
             self.scan = Scan(show=True)
@@ -471,7 +471,7 @@ class KoalaController:
             center = self.getPos()
 
         phase, pxSize = self.phaseAvg_um(avg=1)
-        areaMap = AreaMap(True, phase.shape, pxSize, maxRadius, curvature)
+        areaMap = AreaMap(True, phase.shape, pxSize, maxRadius, curvature, circle)
         self.scan = Graph(areaMap=areaMap)
         row = areaMap.nextRow()
         row.initCenter(phase, pxSize, center, None, 0)

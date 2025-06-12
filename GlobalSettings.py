@@ -70,6 +70,10 @@ class GlobalSettings:
         else:
             self.writeDefault()
             self.settings = copy.deepcopy(GlobalSettings.defaultSettings)
+        self.funcID = 0
+
+    def setFuncID(self, id):
+        self.funcID = id
 
     #! 'Load' means read from file, 'Save' means write to file
     def writeDefault(self):
