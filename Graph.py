@@ -158,25 +158,27 @@ class Graph:
             if self.areaMap.rows[-1].done:
                 return self.areaMap.stitch
 
-            stitch = self.areaMap.stitch
-            lastRow = self.areaMap.rows[-1].stitch + self.areaMap.rows[-1].zDiff
+            return self.areaMap.stitch
+            # stitch = self.areaMap.stitch
+            # lastRow = self.areaMap.rows[-1].stitch + self.areaMap.rows[-1].zDiff
 
-            if lastRow.shape[1] >= stitch.shape[1]:
-                lastRow = lastRow[:, : stitch.shape[1]]
-            else:
-                lastRow = np.pad(
-                    lastRow,
-                    ((0, 0), (0, stitch.shape[1] - lastRow.shape[1])),
-                    mode="constant",
-                    constant_values=np.nan,
-                )
-            if self.areaMap.moveDir == -1:  # stitch up
-                return np.vstack((lastRow, stitch))
-            else:
-                return np.vstack((stitch, lastRow))
+            # if lastRow.shape[1] >= stitch.shape[1]:
+            #     lastRow = lastRow[:, : stitch.shape[1]]
+            # else:
+            #     lastRow = np.pad(
+            #         lastRow,
+            #         ((0, 0), (0, stitch.shape[1] - lastRow.shape[1])),
+            #         mode="constant",
+            #         constant_values=np.nan,
+            #     )
+            # if self.areaMap.moveDir == -1:  # stitch up
+            #     return np.vstack((lastRow, stitch))
+            # else:
+            #     return np.vstack((stitch, lastRow))
 
-        t0 = time.time()
         stitch = getStitchPreview()
+        step = stitch.shape[0] * stitch.shape[1] // (800 * 800 * 3) + 1
+        stitch = stitch[::step, ::step]
 
         self.im.set_data(stitch)
         self.map.set_aspect("auto")
@@ -184,15 +186,13 @@ class Graph:
         self.imcbar.update_normal(self.im)
         self.imcbar.set_label("Height [um]")
 
-        getP = time.time() - t0
-        print(f"Get preview: {getP:.2f}s")
-
     def updateViewLimits(self):
         for plot in [self.contSc, self.dirSearchSc2, self.maxContSearchSc2]:
             self.ax.update_datalim(plot.get_datalim(self.ax.transData))
         self.ax.autoscale_view()
 
     def updateGraph(self):
+        t0 = time.time()
         # remove old annotations
         [txt.remove() for txt in self.texts]
         self.texts.clear()
@@ -211,6 +211,8 @@ class Graph:
         # Draw canvas
         self.fig.canvas.draw_idle()
         self.fig.canvas.flush_events()
+        getP = time.time() - t0
+        print(f"updateGraph: {getP:.2f}s")
 
     def logContrast(self, x, y, z, contrast):
         self.contPoints.append({"x": x, "y": y, "z": z, "cont": contrast})
@@ -235,9 +237,18 @@ class Graph:
 
     def clear(self):
         self.contPoints = []  # contains (x, y, z contrast)
+        self.contSc.set_offsets(np.empty((0, 2)))
+        self.contSc.set_array([])
+
         self.maxContSearches = []
+        self.maxContSearchSc1.set_offsets(np.empty((0, 2)))
+        self.maxContSearchSc2.set_offsets(np.empty((0, 2)))
+        self.maxContSearchSc2.set_array([])
+
         self.directionSearches = []
-        self.updateGraph()
+        self.dirSearchSc1.set_offsets(np.empty((0, 2)))
+        self.dirSearchSc2.set_offsets(np.empty((0, 2)))
+        self.dirSearchSc2.set_array([])
 
     def saveToFiles(self, show=False):
         plt.ioff()
@@ -245,7 +256,7 @@ class Graph:
             print("holding pic open")
             plt.show()
 
+        print("Saving traversal.png")
         plt.savefig(str(self.areaMap.absFolderPath / "traversal.png"))
-        plt.close()
 
-        self.areaMap.saveImages()
+        self.areaMap.saveFit()

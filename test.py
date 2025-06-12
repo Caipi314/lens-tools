@@ -1,5 +1,8 @@
 import json
+import struct
+from matplotlib import gridspec
 from scipy.ndimage import gaussian_filter
+import scipy.optimize as opt
 import pathlib
 import matplotlib.pyplot as plt
 import numpy as np
@@ -53,10 +56,14 @@ def load_phase_file(path=None):
     return phase, pxSize_um  # [um (height)], [um/px (x and y)]
 
 
-def compare():
+def compareXStitch():
     phaseK, pxSize = load_phase_file("./datas/10mmDiamKoala.bin")
+
+    # print(phaseK)
+    # plt.imsave("./datas/pic1.png", phaseK, cmap="jet")
     profileK = np.nanmean(phaseK, axis=0)
-    profileCai = np.load("./stitches/2025-06-05T135030/profile.npy")
+    phaseCai = np.load("./stitches/2025-06-10T150720/profile.npy")
+    profileCai = np.nanmean(phaseCai, axis=0)
 
     smothedCai = gaussian_filter(profileCai, sigma=5)
     smothedK = gaussian_filter(profileK, sigma=5)
@@ -68,14 +75,48 @@ def compare():
     maxOfK = np.argmax(smothedK)
 
     if maxOfCai > maxOfK:
-        maxOfCai = profileCai[maxOfCai - maxOfK :]
+        profileCai = profileCai[maxOfCai - maxOfK :]
     elif maxOfCai < maxOfK:
-        maxOfK = profileK[maxOfK - maxOfCai :]
+        profileK = profileK[maxOfK - maxOfCai :]
 
     fig, ax = plt.subplots(nrows=2, ncols=1)
     ax[0].plot(profileK)
     ax[0].plot(profileCai)
     ax[0].legend(["Koala", "Cai"])
-    ax[1].plot(profileK - profileCai[: len(profileK)])
+    ax[1].plot(profileK[: len(profileCai)] - profileCai)
     plt.savefig("./datas/10mmDiamKoalaVsCai.png")
-    # plt.show()
+
+
+def compareYStitch():
+    phaseK, pxSize = load_phase_file("./datas/2mmYDiamKoala.bin")
+
+    # print(phaseK)
+    # plt.imsave("./datas/pic1.png", phaseK, cmap="jet")
+    profileK = np.nanmean(phaseK, axis=1)
+    phaseCai = np.load("./stitches/2025-06-10T151810/stitch.npy")
+    profileCai = np.nanmean(phaseCai, axis=1)
+
+    smothedCai = gaussian_filter(profileCai, sigma=5)
+    smothedK = gaussian_filter(profileK, sigma=5)
+
+    profileCai -= np.max(smothedCai)
+    profileK -= np.max(smothedK)
+
+    maxOfCai = np.argmax(smothedCai)
+    maxOfK = np.argmax(smothedK)
+
+    if maxOfCai > maxOfK:
+        profileCai = profileCai[maxOfCai - maxOfK :]
+    elif maxOfCai < maxOfK:
+        profileK = profileK[maxOfK - maxOfCai :]
+
+    fig, ax = plt.subplots(nrows=2, ncols=1)
+    ax[0].plot(profileK)
+    ax[0].plot(profileCai)
+    ax[0].legend(["Koala", "Cai"])
+    ax[1].plot(profileK[: len(profileCai)] - profileCai)
+    plt.savefig("./datas/2mmYDiamKoalaVsCai.png")
+
+
+# compareXStitch()
+# compareYStitch()

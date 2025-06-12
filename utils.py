@@ -53,12 +53,12 @@ def getZDiff(shift, f1Area, f2Area):
 
 
 def save1(pic, cmap="jet"):
-    pic = np.nan_to_num(pic, nan=0.5)
+    pic = np.nan_to_num(pic, nan=1)
     plt.imsave("./datas/pic1.png", pic, cmap=cmap)
 
 
 def save2(pic, cmap="jet"):
-    pic = np.nan_to_num(pic, nan=0.5)
+    pic = np.nan_to_num(pic, nan=1)
     plt.imsave("./datas/pic2.png", pic, cmap=cmap)
 
 
@@ -111,20 +111,26 @@ def ptToPtStitch(pic1, pt1, pic2, pt2=np.array((0, 0))):
         overlapH = yMax - yMin
         overlapW = xMax - xMin
 
-        dy, dx = r2 - r1, c2 - c1
-        if abs(dx) > abs(dy):  # x stitch
-            start, end = (1, 0) if dx > 0 else (0, 1)
+        validOverlap = np.logical_and(
+            pic1Weight[yMin:yMax, xMin:xMax] != 0, pic2Weight[yMin:yMax, xMin:xMax] != 0
+        )
+        if overlapW > overlapH:  # x stitch
+            start, end = (1, 0) if c2 > c1 else (0, 1)
             x = np.linspace(start, end, overlapW)
-            X = np.tile(x, (overlapH, 1))
-            pic1Weight[yMin:yMax, xMin:xMax] = X
-            pic2Weight[yMin:yMax, xMin:xMax] = 1 - X
+            # smoother smoothing than just linear
+            xCurve = np.square(np.cos(np.pi * x / 2))
+            X = np.tile(xCurve, (overlapH, 1))
+            pic1Weight[yMin:yMax, xMin:xMax][validOverlap] = (1 - X)[validOverlap]
+            pic2Weight[yMin:yMax, xMin:xMax][validOverlap] = X[validOverlap]
         else:  # y stitch
-            start, end = (1, 0) if dy < 0 else (0, 1)
+            start, end = (1, 0) if r2 > r1 else (0, 1)
             y = np.linspace(start, end, overlapH)
-            Y = np.tile(y[:, np.newaxis], (1, overlapW))
-            pic1Weight[yMin:yMax, xMin:xMax] = Y
-            pic2Weight[yMin:yMax, xMin:xMax] = 1 - Y
-    except ValueError:
+            yCurve = np.square(np.cos(np.pi * y / 2))
+            Y = np.tile(yCurve[:, np.newaxis], (1, overlapW))
+            pic1Weight[yMin:yMax, xMin:xMax][validOverlap] = (1 - Y)[validOverlap]
+            pic2Weight[yMin:yMax, xMin:xMax][validOverlap] = Y[validOverlap]
+    except ValueError as err:
+        print(err)
         print("could not complete alpha-blending because no overlap")
 
     acc = pic1Canvas * pic1Weight + pic2Canvas * pic2Weight

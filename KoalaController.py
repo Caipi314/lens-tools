@@ -173,12 +173,13 @@ class KoalaController:
             unit = struct.unpack("b", f.read(1))[0]
             phase = np.fromfile(f, np.float32).reshape(height, width)
 
-        # [rad] * [m/rad] * [um/m]
         if unit == 1:  # 1 = rad, 2 = m
+            # [um] = [rad] * [m/rad] * [um/m]
             phase = phase * hconv * 1e6
         return phase, pxSize_um  # [um (height)], [um/px (x and y)]
 
     def phaseAvg_um(self, avg=5):
+        avg += 2
         avg = max(avg - 1, 0)
         phase0, pxSize = self.phase_um()
         phases = [self.phase_um()[0] for _ in range(avg)]
@@ -251,7 +252,7 @@ class KoalaController:
                 # start on the side with higher contrast
                 np.sign(I[-1][0] - I[0][0]),
                 minContrast=I[1][0] * 0.9,
-                subdivisions=20,
+                subdivisions=12,
                 avg=10,
             )
         )
@@ -262,14 +263,14 @@ class KoalaController:
                 # start on the side with higher contrast
                 np.sign(I[-1][0] - I[0][0]),
                 minContrast=I[1][0] * 0.9,
-                subdivisions=5,
+                subdivisions=10,
                 avg=20,
             )
         )
         zFocus = I[1][1]
         self.move_to(z=zFocus)
         print(f"Found focus @ z = {int(zFocus)}")
-        return I[1]
+        return I[1][0], self.getPos()
 
     def find_maximising_dir(self, minContrast):
         """Go up and down a bit and see which direction has increasing contrast. Then goes to the less focused point
@@ -354,7 +355,7 @@ class KoalaController:
         pos = self.getPos()
 
         self.scan.logContrast(*pos, cont)
-        print(f"Contrast is {cont:.2f}")
+        print(f"Contrast is {cont:.2f} (minContrast={minContrast:.2f})")
 
         # Could make this more advanced, where min contrast could be a functino of how big your step was, and your slope
         if cont > minContrast:
@@ -366,37 +367,42 @@ class KoalaController:
 
         # quadratic doesn't outperform planer fits
         a, b, c = utils.fit_plane(phase, pxSize)
-        dh = a * dx + b * dy
-
-        self.move_rel(dx, dy, -dh, fast=fast)
         # -dh because the phase picture is calculating heights, and higher things mean lower z
-        return -dh
+        dh = a * dx + b * dy
+        dz = -dh
 
-    def traverseUp(self, speed=100_000, maxStep=300):
+        self.move_rel(dx, dy, dz, fast=fast)
+        return dz
+
+    def stepToExtreme(self, dir, speed=100_000, maxStep=300):
+        """Dir = 1 for the top of a convex object, dir =-1 for the bottom of a concave object"""
         # ?* Assumes already focused
         phase, pxSize = self.phase_um()
 
         # so far, quadratic doesn't outperform planer fits
         a, b, c = utils.fit_plane(phase, pxSize)
-        grad = np.array([a, b])
+        grad = dir * np.array([a, b])
         mag = np.linalg.norm(grad)
         dx, dy = grad * speed if mag * speed <= maxStep else maxStep * grad / mag
+        # -dh because the phase picture is calculating heights, and higher things mean lower z
         dh = a * dx + b * dy
+        dz = -dh
 
-        self.move_rel(dx, dy, -dh)
-        print(f"For dx={int(dx)} dy={int(dy)}, added dz={dh:.2f}")
-        return dh
+        self.move_rel(dx, dy, dz)
+        print(f"For dx={int(dx)} dy={int(dy)}, added dz={dz:.2f}")
+        return dz
 
-    def traverseToTop(self):
+    def traverseToExtreme(self, dir):
         """Returns the focused cords and contrast at the center (top)"""
+        """Dir = 1 for the top of a convex object, dir =-1 for the bottom of a concave object"""
 
         startCont, pos = self.maximizeFocus()
+        dzThresh = self.settings.get("DZ_THRESH")
 
         for i in range(1000):
-            dz = self.traverseUp(speed=50_000 - i * 50, maxStep=1_000)
-            cont, z = self.ensureFocus(minContrast=startCont * 0.5)
-            # self.maximizeFocus()
-            if dz < 0.01:
+            dz = self.stepToExtreme(dir=dir, speed=50_000 - i * 50, maxStep=1_000)
+            cont, _pos = self.ensureFocus(minContrast=startCont * 0.5)
+            if abs(dz) < dzThresh:
                 center = self.getPos()
                 print(f"Top is at {center}")
                 return cont, center
@@ -434,33 +440,38 @@ class KoalaController:
             picTime = time.time() - t0
             print(f"Total Pic time: {picTime:.3f}s")
 
-    def mapProfile(self, maxRadius=None):
-        # self.scan = Scan(show=True)
-        # startCont, center = self.traverseToTop()
-        # self.scan.saveToFiles()
-        # TODO replace with above after testing
-        self.move_to(59863.48, 48867.56, 1360.2)
-        center = self.getPos()
+    def mapProfile(self, curvature, maxRadius=None):
+        """Curvature=1, traverse to top, =-1 to bottom, =0 dont traverse at all"""
+        if curvature != 0:  # convex
+            self.scan = Scan(show=True)
+            startCont, center = self.traverseToExtreme(dir=curvature)
+            self.scan.saveToFiles()
+        else:
+            self.move_to(58249.36, 52110, 12227.2)  # TODO just for debugging, remove
+            center = self.getPos()
 
         phase, pxSize = self.phaseAvg_um(avg=1)
-        areaMap = AreaMap(True, phase.shape, pxSize, maxRadius)
+        areaMap = AreaMap(True, phase.shape, pxSize, maxRadius, curvature)
         self.scan = Graph(areaMap=areaMap)
         row = areaMap.nextRow()
         row.initCenter(phase, pxSize, center, None, 0)
         self.mapRow(row)
 
+        areaMap.saveImages()
         self.scan.saveToFiles(show=False)
 
-    def mapArea(self, maxRadius=None):
-        # self.scan = Scan(show=True)
-        # startCont, center = self.traverseToTop()
-        # self.scan.saveToFiles()
-        # TODO replace with above after testing
-        self.move_to(59863.48, 48867.56, 1360.2)
-        center = self.getPos()
+    def mapArea(self, curvature, maxRadius=None):
+        """Curvature=1, traverse to top, =-1 to bottom, =0 dont traverse at all"""
+        if curvature != 0:
+            self.scan = Scan(show=True)
+            startCont, center = self.traverseToExtreme(dir=curvature)
+            self.scan.saveToFiles()
+        else:
+            self.move_to(58249.36, 52110, 12227.2)  # TODO just for debugging, remove
+            center = self.getPos()
 
         phase, pxSize = self.phaseAvg_um(avg=1)
-        areaMap = AreaMap(True, phase.shape, pxSize, maxRadius)
+        areaMap = AreaMap(True, phase.shape, pxSize, maxRadius, curvature)
         self.scan = Graph(areaMap=areaMap)
         row = areaMap.nextRow()
         row.initCenter(phase, pxSize, center, None, 0)

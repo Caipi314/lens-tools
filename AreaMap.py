@@ -1,26 +1,32 @@
 from datetime import datetime
+import scipy.optimize as opt
 import json
+import math
 from pathlib import Path
 import threading
+from skimage.transform import downscale_local_mean
 from skimage.registration import phase_cross_correlation
 
-from matplotlib import pyplot as plt
+from matplotlib import colors, gridspec, pyplot as plt
 import numpy as np
+from GlobalSettings import GlobalSettings
 from Row import Row
 from Traversal import BadFit
 import utils
 
 
 class AreaMap:
-    yOverlap = 25 * 5  # ? Could do the max number of nans on the pic below it
+    settings = GlobalSettings()
+    yOverlap = settings.get("PIC_OVERLAP")
     overlapVec = np.array((yOverlap, 0))
     acceptableDx = 15
 
     basePath = Path.cwd()
     baseFolder = "./stitches/"
 
-    def __init__(self, isProfile, picShape, pxSize, maxRadius=None):
+    def __init__(self, isProfile, picShape, pxSize, maxRadius=None, curvature=0):
         self.isProfile = isProfile
+        self.curvature = curvature
         self.maxRadius = maxRadius
         self.picShape = picShape  # (height, width)
         self.pxSize = pxSize
@@ -36,11 +42,13 @@ class AreaMap:
         folderName = datetime.now().strftime("%Y-%m-%dT%H%M%S")
         self.absFolderPath = AreaMap.basePath / AreaMap.baseFolder / folderName
         Path(str(self.absFolderPath)).mkdir(parents=True)
+        self.stitchDS = None
+        self.downFacPxSize = None
 
     def nextRow(self):
-        # TODO fancier logic than just constant maxRadius for all
-        row = Row(maxRadius=250)
-        if len(self.rows) == 0:
+        totalCenter = getattr(self.centerRow, "centerPos", None)  # could be none
+        row = Row(maxRadius=self.maxRadius, totalCenter=totalCenter)
+        if self.centerRow is None:
             self.centerRow = row
 
         self.rows.append(row)
@@ -89,6 +97,7 @@ class AreaMap:
         )
         self.topPt = picShift + row.centerPt
         self.botPt += stitchShift
+        self.saveImages()  # on a thread so non blocking
 
     def stitchDown(self, row: Row):
         row.stitch += row.zDiff
@@ -100,6 +109,7 @@ class AreaMap:
         )
         self.botPt = picShift + row.centerPt
         self.topPt += stitchShift
+        self.saveImages()  # on a thread so non blocking
 
     def addToStitch(self, row):
         stitchUp = self.moveDir == -1
@@ -114,23 +124,121 @@ class AreaMap:
         )
         thread.start()
 
+    def saveFit(self, phase=None, pxSize=None, curvature=None):
+        if phase is None:
+            phase = self.stitchDS
+        if pxSize is None:
+            pxSize = self.downFacPxSize
+        if curvature is None:
+            curvature = self.curvature
+        if curvature == 0:
+            return print("not saving fit. curvature == 0")
+        if phase is None or pxSize is None:
+            return print("Can't save fit because no DS stitch")
+        print("Saving curvature_fit.png")
+
+        x = np.linspace(0, phase.shape[1] * pxSize, phase.shape[1])
+        y = np.linspace(0, phase.shape[0] * pxSize, phase.shape[0])
+        X, Y = np.meshgrid(x, y)
+
+        # mask out the NaNs
+        mask = ~np.isnan(phase)
+        x_flat = X[mask]
+        y_flat = Y[mask]
+        xy_flat = np.vstack((x_flat, y_flat))
+        z_flat = phase[mask]
+
+        def fitFunc(XY, a, b, c, R):
+            x, y = XY
+            circ = np.square(x - a) + np.square(y - b)
+            bot = R + np.sqrt(R**2 - circ)
+            return c - curvature * circ / bot
+
+        guess = (
+            phase.shape[1] * pxSize / 2,
+            phase.shape[0] * pxSize / 2,
+            0,
+            0.1e6,
+        )
+
+        popt, pcov = opt.curve_fit(fitFunc, xy_flat, z_flat, p0=guess)
+        uncert = np.sqrt(np.diag(pcov))
+
+        fig = plt.figure(figsize=(10, 10))
+        fig.suptitle("Fit to Conic Section", fontsize=16)
+
+        fig.text(
+            0,
+            0.93,
+            s=f"center (from top left) (a,b,c)=({popt[0]:.0f}, {popt[1]:.0f}, {popt[2]:.2e}) [um]",
+        )
+        fig.text(
+            0,
+            0.91,
+            s=f"R_curvature=({popt[3]/1e6:.3e} ± {uncert[3]/1e6:.3e}) [m]",
+        )
+        fig.text(
+            0.5,
+            0.93,
+            s=f"Z = ((x-a)^2 + (y-b)^2)/(R + √(R^2 - (x-a)^2 - (y-b)^2))",
+        )
+        gs = gridspec.GridSpec(2, 2)
+        ax1 = fig.add_subplot(gs[0, 0])
+        ax2 = fig.add_subplot(gs[0, 1])
+        ax3 = fig.add_subplot(gs[1, :])
+
+        ax1.set_title("Original phase [um]")
+        im1 = ax1.imshow(phase, cmap="jet")
+        fig.colorbar(im1, ax=ax1, fraction=0.046, pad=0.04)
+
+        ax2.set_title("Fitted phase [um]")
+        fitted = fitFunc((X, Y), *popt)
+        im2 = ax2.imshow(fitted, cmap="jet")
+        fig.colorbar(im2, ax=ax2, fraction=0.046, pad=0.04)
+
+        ax3.set_title("Residuals [um]")
+        resids = phase - fitted
+        norm = colors.TwoSlopeNorm(vmin=resids.min(), vcenter=0, vmax=resids.max())
+        im3 = ax3.imshow(resids, norm=norm, cmap="seismic")
+
+        fig.colorbar(im3, ax=ax3, fraction=0.046, pad=0.04)
+
+        path = str(self.absFolderPath / "curvature_fit.png")
+        fig.savefig(path)
+
+        with open(str(self.absFolderPath / "curvature_fit.json"), "w") as f:
+            json.dump(
+                {
+                    "pxSize": pxSize,
+                    "phase shape": phase.shape,
+                    "curvature": self.curvature,
+                    "fitFunc": "Z = ((x-a)^2 + (y-b)^2)/(R + √(R^2 - (x-a)^2 - (y-b)^2))",
+                    "fit variable names": ("a", "b", "c", "R"),
+                    "fit variables [um]": popt,
+                    "fit variable uncertainty [um]": uncert,
+                    "phaseFile": "stitch_DS.npy",
+                },
+                f,
+                indent=2,
+                default=str,
+            )
+
     def saveImages(self):
         """Saves .npy array and png image of the stitch and profile"""
-        # TODO what if isProfile = False
 
         stitch = self.stitch if self.stitch is not None else self.centerRow.stitch
-        profile = self.centerRow.stitch[300, :]
-        # profile = np.nanmean(self.centerRow.stitch, axis=0)
-
-        np.save(str(self.absFolderPath / "stitch.npy"), stitch)
+        profile = self.centerRow.stitch
         np.save(str(self.absFolderPath / "profile.npy"), profile)
 
-        stitch = np.nan_to_num(stitch, nan=0)
-        plt.imsave(str(self.absFolderPath / "stitch.png"), stitch, cmap="jet")
+        # limit stitch size under 100mb
+        stitchSize = np.prod(stitch.shape) * np.dtype(stitch.dtype).itemsize / (1024**2)
+        downFac = max(1, math.floor(stitchSize / 100))
+        self.downFacPxSize = self.pxSize * downFac
+        self.stitchDS = downscale_local_mean(stitch, (downFac, downFac))
+        np.save(str(self.absFolderPath / "stitch_DS.npy"), self.stitchDS)
 
-        fig, ax = plt.subplots()
-        ax.plot(profile)
-        fig.savefig(str(self.absFolderPath / "profile.png"))
+        stitchNoNan = np.nan_to_num(self.stitchDS, nan=np.nanmin(stitch))
+        plt.imsave(str(self.absFolderPath / "stitch_DS.png"), stitchNoNan, cmap="jet")
 
         with open(str(self.absFolderPath / "info.json"), "w") as f:
             json.dump(
@@ -138,10 +246,11 @@ class AreaMap:
                     "folderPath": str(self.absFolderPath),
                     "isProfile": self.isProfile,
                     "numRows": len(self.rows),
-                    "pxSize": self.pxSize,
-                    "stitchFile": "stitch.npy",
+                    "profilePxSize": self.pxSize,
+                    "stitchDSPxSize": self.downFacPxSize,
+                    "stitchFile": "stitch_DS.npy",
                     "profileFile": "profile.npy",
-                    "instructions": 'To recover full 2d stitch, use `stitch = np.load("./stitch.npy")`. To recover 1d profile, use `stitch = np.load("./profile.npy")`. To load this dictionary as kv pairs use `with open("info.json", "r") as f: data = json.load(f)`',
+                    "instructions": 'To recover .npy file into a np array use `stitch = np.load("./stitch.npy")`. To load this dictionary as kv pairs use `with open("info.json", "r") as f: data = json.load(f)`',
                 },
                 f,
                 indent=2,

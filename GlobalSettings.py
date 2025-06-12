@@ -10,9 +10,9 @@ class GlobalSettings:
         "IDEAL_NOISE_CUTOFF": {
             "name": "Noise Contrast Cutoff",
             "type": "float",
-            "value": 2.2,
+            "value": 2.3,
             "stagedVal": None,
-            "defaultValue": 2.2,
+            "defaultValue": 2.3,
             "description": "Contrast values under this value will be considered as noise.",
         },
         "ABS_MAX_Z": {
@@ -22,6 +22,14 @@ class GlobalSettings:
             "stagedVal": None,
             "defaultValue": 27175,
             "description": "The maximum value of Z (read by the joystick in um), so that the 20x lens doesn't hit the stage. MUST RECALIBRATE IF THE CRANK IS TURNED",
+        },
+        "PIC_OVERLAP": {
+            "name": "PIC_Overlap",
+            "type": "int",
+            "value": 35,
+            "stagedVal": None,
+            "defaultValue": 35,
+            "description": "The number of pixels to overlap stitch images",
         },
         "FIND_DIR_DIST": {
             "name": "Find Direction Step Size",
@@ -38,6 +46,14 @@ class GlobalSettings:
             "stagedVal": None,
             "defaultValue": 0.4,
             "description": "Time to wait for a fast (small) relative move in seconds. No reason to go over 0.6.",
+        },
+        "DZ_THRESH": {
+            "name": "Delta Z Top of Curvature Threshold",
+            "type": "float",
+            "value": 0.01,
+            "stagedVal": None,
+            "defaultValue": 0.01,
+            "description": "If the slope of the image is less than this value while traversing to an extreme, stop because we are at the top.",
         },
     }
 

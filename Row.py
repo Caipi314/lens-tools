@@ -3,17 +3,21 @@ import numpy as np
 from skimage.registration import phase_cross_correlation
 
 from matplotlib import pyplot as plt
+from GlobalSettings import GlobalSettings
 from Traversal import BadFit
 import utils
 
 
 class Row:
-    xOverlap = 25 * 5
+    settings = GlobalSettings()
+    xOverlap = settings.get("PIC_OVERLAP")
     overlapVec = np.array((0, xOverlap))
     acceptableDy = 20
 
-    def __init__(self, maxRadius=None):
+    def __init__(self, maxRadius=None, totalCenter=None):
         self.maxRadius = maxRadius
+        self.totalCenter = totalCenter
+        self.halfWidth = None
         self.done = False
         self.moveDir = 1
         # always go right (1) then left (-1) each time from center
@@ -25,7 +29,13 @@ class Row:
         # (dy, dx) relative to the offset and last center pic. is None if first pic
         self.shift = shift
         self.zDiff = zDiff
-
+        self.halfWidth = (
+            np.sqrt(
+                self.maxRadius**2 - np.square(self.centerPos[1] - self.totalCenter[1])
+            )
+            if self.totalCenter is not None
+            else self.maxRadius
+        )
         self.stitch = centerPic
         self.picShape = np.array(self.centerPic.shape)  # (y, x) in px
         self.stepX = (self.picShape[1] - Row.xOverlap) * self.pxSize  # positive X
@@ -35,7 +45,9 @@ class Row:
         self.centerPt = np.array((0, 0))  # top left of the center pic
 
     def prematureEdge(self, x):
-        return self.maxRadius and abs(x - self.centerPos[0]) > self.maxRadius
+        return (
+            self.halfWidth is not None and abs(x - self.centerPos[0]) > self.halfWidth
+        )
 
     def atEdge(self, x, y, z):
         if self.moveDir == 1:
@@ -48,15 +60,13 @@ class Row:
     def stitchRight(self, pic, shift):
         stitchPt = self.rightPt - Row.overlapVec + shift
 
-        # put the point pic(0, 0) onto point self.stitch(stitchPt)
+        # put the point pic(0, 0) onto point self.stitch[stitchPt]
         self.stitch, stitchShift, picShift = utils.ptToPtStitch(
             self.stitch, stitchPt, pic
         )
         self.leftPt += stitchShift
         self.centerPt += stitchShift
         self.rightPt = np.array((0, self.picShape[1])) + picShift
-
-        print(f"Left: {self.leftPt}, center: {self.centerPt}, right: {self.rightPt}")
 
     def stitchLeft(self, pic, shift):
         stitchPt = self.leftPt + Row.overlapVec + shift
@@ -69,8 +79,6 @@ class Row:
         self.leftPt = picShift
         self.centerPt += stitchShift
         self.rightPt += stitchShift
-
-        print(f"Left: {self.leftPt}, center: {self.centerPt}, right: {self.rightPt}")
 
     def addToStitch(self, pic):
         """Stitches based on self.moveDir. Throws BadFit if bad stitch"""
